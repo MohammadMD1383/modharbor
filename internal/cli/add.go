@@ -61,6 +61,9 @@ considered.
 				return fail("%v", err)
 			}
 
+			verbosef("instance %s  mods=%s  loader=%s  channel=%s",
+				inst.ID, inst.ModsDirOrDefault(), loaderName(inst.Type), a.Channel())
+
 			ctx := cmd.Context()
 			installed, skipped, err := installProjects(ctx, a, inst, projects, withDeps, dryRun, a.Channel())
 			if err != nil {

@@ -246,17 +246,75 @@ Remaining, in rough priority order:
 
 ---
 
+## The v0.1.0 release — READ THIS FIRST
+
+Tag `v0.1.0` exists on `main` and a release run was dispatched
+(`gh workflow run release.yml -f tag=v0.1.0`, run id `37049761783`). **Check
+it first thing:**
+
+```bash
+gh run list --workflow=release.yml --limit 3
+gh release view v0.1.0          # confirms artifacts landed
+gh release view v0.1.0 --json assets --jq '.assets[].name'
+```
+
+Expect 11 assets: 6 archives (`_linux_amd64.tar.gz`, `_linux_arm64.tar.gz`,
+`_darwin_amd64.tar.gz`, `_darwin_arm64.tar.gz`, `_windows_amd64.zip`,
+`_windows_arm64.zip`), 4 linux packages (deb+rpm × amd64/arm64), and
+`checksums.txt`. If the run failed, `--log-failed` and fix the cause — do not
+re-tag blindly, see the traps below.
+
+### Four bugs the release attempt exposed (all fixed, all committed)
+
+Cutting a tag was far more productive than anything else done so far. Every
+one of these had been sitting in the repo, passing locally.
+
+1. **The CI lint job had never worked.** `--default=none` is a golangci-lint
+   **v2** flag, but `version: latest` resolved a **v1.64.8** binary, which
+   rejected it: `Error: unknown flag: --default`, exit 3. Every push since
+   that job landed was red. Pinned to `v2.14.0`. A linter that cannot start
+   is worse than no linter, because the log reads as if the code were at fault.
+
+2. **`release.yml` was unparseable by GitHub.** Dispatching it returned
+   `failed to parse workflow: (Line: 99, Col: 13): A mapping was not
+   expected`. PyYAML accepted the file; GitHub's parser did not. With the
+   triggers never read, GitHub listed the workflow by path instead of its
+   declared name, and fired it on **every push to main**, where it failed
+   immediately because `TAG` resolved to `main`. Rewritten conventionally.
+
+   **Lesson: validate workflows with GitHub, not a YAML parser.** Any YAML
+   linter will happily accept a file Actions rejects.
+
+3. **A test asserted on deflated bytes.** `TestDoctorFixPreservesTheDuplicateItMovedAside`
+   grepped a jar's raw file bytes for `"0.9.0"`, which only appears when the
+   compressor happened to store the entry. Passed on Go 1.27, failed on CI's
+   1.23/1.24. Now reads `fabric.mod.json` through `archive/zip`. The build gate
+   caught it — the first time that file ran outside the dev machine.
+
+4. **The tag was stale.** It was cut before fixes 1–3, so goreleaser refused:
+   `git tag v0.1.0 was not made against commit a30fd8e`. The tag was moved to
+   HEAD with `git tag -d` + `git push -f`. **Only safe because no release had
+   been published yet** — never force-move a tag that has shipped.
+
+### Traps for the next release
+
+- Tag **after** the tree is green, and make sure the tag lands on the commit
+  CI passed. `git push --follow-tags` or tag the pushed SHA explicitly.
+- Verify the workflow parses before relying on it: `gh workflow run <file>
+  -f ... --dry-run` is not available, so dispatch once with a harmless input.
+- `go.devneeds.ir` (the configured GOPROXY) returns 429 under load, which
+  blocks `GOTOOLCHAIN=go1.24` locally. Cross-version testing has to happen in
+  CI.
+
+---
+
 ## Suggested next steps, in order
 
-1. **Tag `v0.1.0`.** Everything is ready: pipeline proven across 6 targets
-   (linux/darwin/windows × amd64/arm64), checksums verified, CHANGELOG section
-   present, `docs/install.md` written. No tag exists yet. Until then
-   `go install github.com/MohammadMD1383/modharbor/cmd/modharbor@latest` does
-   not work. Cutting the tag is the owner's call — say so if asking.
-
-   ```bash
-   git tag v0.1.0 && git push origin v0.1.0
-   ```
+1. **Confirm the release.** See "The v0.1.0 release" above — check the run, then
+   `gh release view v0.1.0` for the 11 expected assets. If it succeeded,
+   `go install github.com/MohammadMD1383/modharbor/cmd/modharbor@latest`
+   finally works. Also worth watching CI on `main` go green for the first time
+   in its history, which is what fix 1 above unblocked.
 
 2. **B27** (fsync durability). It is a data-integrity issue on the download
    path, and the fix is small.

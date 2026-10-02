@@ -113,12 +113,45 @@ works against a modded folder with no version JSON.
 
 ## P2 — polish
 
-### [~] B14. Test coverage for `internal/cli`
+### [x] B14. Test coverage for `internal/cli`
 The command layer had no tests, which is how B2 through B6 went unnoticed.
 `internal/cli` reported 0% coverage.
 
-Started (T1, `b0489c2`): a harness plus regression tests for each fix took it
-to 24.9%. In progress (T3) to cover the pure helpers and the error paths.
+Done (T1 then T3): `internal/cli` 0% → 24.9% → 36.3%, and `internal/ui` from
+no test files to 11.1%. The B1 regression test (a failing command must write
+to stderr, not just exit non-zero) was validated by temporarily restoring the
+bug and confirming three tests fail. T3 also extended the harness with a
+concurrent dual-pipe drain, since the original single pipe could deadlock, and
+proved isolation by running the suite inside `unshare -rm` with the real
+`~/.minecraft` bind-masked.
+
+### [ ] B19. `doctor --json` emits `{}` for every finding
+`finding` has four unexported fields, so `encoding/json` writes empty objects.
+Real output on a broken-jar instance:
+
+```json
+{ "instance": "d", "errors": 0, "warnings": 2, "findings": [ {}, {} ] }
+```
+
+Severity, title, detail and fix never reach the wire, so `doctor --json` is
+unusable for automation — the counts are the entire machine-readable output.
+
+### [ ] B20. `doctor --json` always exits 0
+`return printJSON(rep)` short-circuits before `exitWithCode(1, nil)`, so
+error-severity findings do not affect the exit status in `--json` mode while
+the human path exits 1. A script gets a different verdict depending on a
+formatting flag.
+
+### [ ] B21. `projectKey` mis-parses a URL with a trailing slash *and* a query
+The trailing slash is trimmed before the query string, so
+`https://modrinth.com/mod/lithium/?tab=versions` yields `"lithium/"`, which
+404s. Slash-before-query works; together they do not.
+
+### [ ] B22. The better "no instance" error is unreachable dead code
+`requireInstanceArg` and `missingInstanceError` are written, documented and
+tested, but no command calls them, so `Execute`'s `try: modharbor instances`
+hint can never fire. Users get `ResolveInstance`'s thinner message instead.
+Either wire it in or delete it — T3's existing test is a signal it is wanted.
 
 ### [ ] B15. Coverage for `internal/provider/curseforge`
 Currently 0%. The client is untested even though it is reachable via

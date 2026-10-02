@@ -2,6 +2,9 @@
 #
 # https://goreleaser.com — run `goreleaser release --snapshot --clean` locally to
 # check the whole pipeline without publishing anything.
+#
+# `goreleaser check` validates this file against goreleaser's own schema without
+# building anything. CI runs it on every PR, so run it here too before tagging.
 version: 2
 
 project_name: modharbor
@@ -46,10 +49,12 @@ archives:
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
-      # The trailing wildcard tolerates these files not existing yet.
-      - LICENSE*
-      - README.md*
-      - CHANGELOG.md*
+      # Exact names, no trailing wildcard: these three files are all tracked in
+      # git today, and a glob silently tolerating a missing file is how an
+      # archive ends up shipping without its LICENSE.
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
 
 checksum:
   name_template: checksums.txt
@@ -68,6 +73,7 @@ nfpms:
       - rpm
     maintainer: MohammadMD1383
     homepage: https://github.com/MohammadMD1383/modharbor
+    license: MIT
     description: >-
       modharbor finds, updates and migrates Minecraft mods: it identifies each
       installed jar against Modrinth, resolves the newest build compatible with
@@ -76,9 +82,16 @@ nfpms:
     section: default
     priority: optional
     bindir: /usr/bin
-    # Docs are added to the packages under /usr/share/doc/modharbor once the
-    # repository has a README.md and LICENSE; nfpm fails on a glob that
-    # matches nothing, so they are intentionally not referenced yet.
+    # nfpm hard-fails on a `src` glob that matches nothing, so these are the
+    # exact tracked filenames rather than patterns. They all exist; the docs are
+    # shipped so the packages are self-describing.
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/modharbor/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/modharbor/README.md
+      - src: CHANGELOG.md
+        dst: /usr/share/doc/modharbor/CHANGELOG.md
 
 changelog:
   sort: asc

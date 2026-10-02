@@ -119,3 +119,24 @@ jobs:
             --enable=staticcheck
             --enable=ineffassign
             --enable=unused
+
+  release-config:
+    name: goreleaser check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Nothing else in CI ever reads .goreleaser.yaml, so a typo in it would
+      # otherwise sit unnoticed until somebody tagged and release.yml failed
+      # halfway through publishing. `check` only validates the file against
+      # goreleaser's own JSON schema: no build, no module downloads, no Go
+      # toolchain — which is why there is no setup-go step here.
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          # `~> v2` rather than `latest`: the config declares `version: 2` and
+          # a goreleaser major bump must never be the thing that breaks a tag.
+          version: '~> v2'
+          args: check

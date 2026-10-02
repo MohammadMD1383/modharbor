@@ -485,19 +485,16 @@ func TestMalformedObjectBodies(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
-		// wantErr is false only for the one body that is valid JSON and so
-		// decodes into a zero value. Its behaviour is pinned rather than
-		// endorsed: the fix belongs in do(), which must treat it as an error,
-		// and it should not arrive unnoticed.
-		wantErr bool
 	}{
-		{name: "truncated json", body: `{"id": 306612`, wantErr: true},
-		{name: "empty body", body: "", wantErr: true},
-		{name: "html error page", body: "<html><body>502 Bad Gateway</body></html>", wantErr: true},
-		{name: "array where an object belongs", body: `[]`, wantErr: true},
-		{name: "wrong field type", body: `{"id": "not-a-number"}`, wantErr: true},
-		{name: "trailing garbage", body: `{"id": 306612} oops`, wantErr: true},
-		{name: "null", body: `null`, wantErr: false},
+		{name: "truncated json", body: `{"id": 306612`},
+		{name: "empty body", body: ""},
+		{name: "html error page", body: "<html><body>502 Bad Gateway</body></html>"},
+		{name: "array where an object belongs", body: `[]`},
+		{name: "wrong field type", body: `{"id": "not-a-number"}`},
+		{name: "trailing garbage", body: `{"id": 306612} oops`},
+		// The one body that used to decode cleanly into a zero project, which
+		// no error message could tell apart from a mod that publishes nothing.
+		{name: "null", body: `null`},
 	}
 
 	for _, tc := range tests {
@@ -510,28 +507,14 @@ func TestMalformedObjectBodies(t *testing.T) {
 			file, ferr := c.ModFile(ctx, cfFileRight)
 
 			for name, e := range map[string]error{"Mod": err, "ModFile": ferr} {
-				if tc.wantErr && e == nil {
+				if e == nil {
 					t.Errorf("%s: body %q decoded without an error", name, tc.body)
 				}
-				if !tc.wantErr && e != nil {
-					t.Errorf("%s: body %q returned %v", name, tc.body, e)
-				}
 			}
-			if tc.wantErr {
-				// A failed decode must not also hand back a half-built value
-				// that a caller could mistake for a result.
-				if mod != nil || file != nil {
-					t.Fatalf("a failed decode returned data: %v %v", mod, file)
-				}
-				return
-			}
-			// A `null` reply is indistinguishable from a project that exists
-			// and is empty; the caller sees id 0 and a zero struct.
-			if mod == nil || mod.ID != 0 {
-				t.Fatalf("Mod returned %+v, want the zero project", mod)
-			}
-			if file == nil || file.ID != 0 {
-				t.Fatalf("ModFile returned %+v, want the zero file", file)
+			// A failed decode must not also hand back a value that a caller
+			// could mistake for a result.
+			if mod != nil || file != nil {
+				t.Fatalf("a failed decode returned data: %v %v", mod, file)
 			}
 		})
 	}
@@ -543,16 +526,15 @@ func TestMalformedObjectBodies(t *testing.T) {
 // reads as "this mod publishes nothing".
 func TestMalformedListBodies(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
+		name string
+		body string
 	}{
-		{name: "truncated json", body: `[{"id": 306612`, wantErr: true},
-		{name: "empty body", body: "", wantErr: true},
-		{name: "html error page", body: "<html><body>502 Bad Gateway</body></html>", wantErr: true},
-		{name: "object where an array belongs", body: `{"data": []}`, wantErr: true},
-		{name: "scalar element", body: `["sodium"]`, wantErr: true},
-		{name: "null", body: `null`, wantErr: false},
+		{name: "truncated json", body: `[{"id": 306612`},
+		{name: "empty body", body: ""},
+		{name: "html error page", body: "<html><body>502 Bad Gateway</body></html>"},
+		{name: "object where an array belongs", body: `{"data": []}`},
+		{name: "scalar element", body: `["sodium"]`},
+		{name: "null", body: `null`},
 	}
 
 	for _, tc := range tests {
@@ -565,24 +547,82 @@ func TestMalformedListBodies(t *testing.T) {
 			hits, serr := c.Search(ctx, "sodium", 5)
 
 			for name, e := range map[string]error{"Files": err, "Search": serr} {
-				if tc.wantErr && e == nil {
+				if e == nil {
 					t.Errorf("%s: body %q decoded without an error", name, tc.body)
 				}
-				if !tc.wantErr && e != nil {
-					t.Errorf("%s: body %q returned %v", name, tc.body, e)
-				}
 			}
-			if tc.wantErr {
-				if files != nil || hits != nil {
-					t.Fatalf("a failed decode returned data: %v %v", files, hits)
-				}
-				return
-			}
-			if len(files) != 0 || len(hits) != 0 {
-				t.Fatalf("null body produced data: %v %v", files, hits)
+			if files != nil || hits != nil {
+				t.Fatalf("a failed decode returned data: %v %v", files, hits)
 			}
 		})
 	}
+}
+
+// TestNullBodyIsNotAnEmptyListing pins the distinction B26 exists for.
+//
+// A `null` body is a failure and an empty array is an answer. Both used to come
+// back as a zero value with no error, so a mod with hundreds of files and a mod
+// that publishes none were indistinguishable — and the migration silently
+// skipped the first. Every endpoint has to say which of the two it received,
+// and has to name the endpoint, because "nothing" is otherwise all a caller
+// has to go on.
+func TestNullBodyIsNotAnEmptyListing(t *testing.T) {
+	tests := []struct {
+		name     string
+		call     func(*Client) error
+		wantPath string
+	}{
+		{"Mod", func(c *Client) error { _, err := c.Mod(context.Background(), cfModID); return err }, "/v1/mods/306612"},
+		{"ModFile", func(c *Client) error {
+			_, err := c.ModFile(context.Background(), cfFileRight)
+			return err
+		}, "/v1/files/4712346"},
+		{"Files", func(c *Client) error { _, err := c.Files(context.Background(), cfModID); return err }, "/v1/mods/306612/files"},
+		{"Search", func(c *Client) error {
+			_, err := c.Search(context.Background(), "sodium", 5)
+			return err
+		}, "/v1/mods/search"},
+		{"GameVersionID", func(c *Client) error {
+			_, err := c.GameVersionID(context.Background(), "26.3")
+			return err
+		}, "/v1/games/432/versions"},
+		{"LoaderID", func(c *Client) error { _, err := c.LoaderID(context.Background(), "rift"); return err }, "/v1/games/432/categories"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name+" answers null", func(t *testing.T) {
+			f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "null") })
+			err := tc.call(clientFor(f))
+			if err == nil {
+				t.Fatal("a null body was reported as an answer")
+			}
+			// A caller branches on this to say "the API answered nothing",
+			// which is not the same as "there is nothing to install".
+			if !errors.Is(err, ErrNullResponse) {
+				t.Fatalf("error %v does not wrap ErrNullResponse", err)
+			}
+			if !strings.Contains(err.Error(), "null") {
+				t.Errorf("message %q does not say the body was null", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantPath) {
+				t.Errorf("message %q does not name the endpoint %q", err, tc.wantPath)
+			}
+		})
+	}
+
+	// The other half: an empty array is a real answer and has to stay one.
+	t.Run("an empty listing is still an answer", func(t *testing.T) {
+		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "[]") })
+		c := clientFor(f)
+
+		files, err := c.Files(context.Background(), cfModID)
+		if err != nil {
+			t.Fatalf("an empty file list was reported as an error: %v", err)
+		}
+		if len(files) != 0 {
+			t.Fatalf("expected no files, got %+v", files)
+		}
+	})
 }
 
 // TestRateLimitIsNotRetried pins the 429 behaviour so a change to it is a
@@ -998,7 +1038,7 @@ func TestModMapsProjectAndPrimesFiles(t *testing.T) {
 	if got.SHA1 != cfSHA1Right {
 		t.Errorf("sha1 = %q, want %q", got.SHA1, cfSHA1Right)
 	}
-	if !got.Supports("26.3", LoaderFabric) {
+	if !got.Supports("26.3") {
 		t.Error("a 26.3 file does not report support for 26.3")
 	}
 	if got.DownloadURL == nil || *got.DownloadURL == "" {
@@ -1033,7 +1073,7 @@ func TestPicksNewestFileForGameVersion(t *testing.T) {
 	newestFirst := Newest(files)
 	var picked *ModFile
 	for _, file := range newestFirst {
-		if file.Supports("26.3", LoaderFabric) {
+		if file.Supports("26.3") {
 			picked = &file
 			break
 		}
@@ -1054,7 +1094,7 @@ func TestPicksNewestFileForGameVersion(t *testing.T) {
 	if newestFirst[0].ID != cfFileWrongMC {
 		t.Fatalf("ordering changed: first is %d, want %d", newestFirst[0].ID, cfFileWrongMC)
 	}
-	if newestFirst[0].Supports("26.3", LoaderFabric) {
+	if newestFirst[0].Supports("26.3") {
 		t.Error("a build for 26.1 was accepted for 26.3")
 	}
 }
@@ -1065,47 +1105,209 @@ func TestPicksNewestFileForGameVersion(t *testing.T) {
 func TestSupportsRejectsOtherGameVersions(t *testing.T) {
 	file := ModFile{GameVersions: []string{"26.3", "Fabric"}, FileName: "sodium-fabric-0.6.1.jar"}
 
-	if !file.Supports("26.3", "") {
+	if !file.Supports("26.3") {
 		t.Error("a file built for 26.3 was rejected for 26.3")
 	}
-	if !file.Supports("26.3", LoaderFabric) {
-		t.Error("a file built for 26.3 was rejected for 26.3/fabric")
-	}
-	if file.Supports("26.4", "") {
+	if file.Supports("26.4") {
 		t.Error("a file built for 26.3 was accepted for 26.4")
 	}
-	if file.Supports("1.21.4", "") {
+	if file.Supports("1.21.4") {
 		t.Error("a 26.3 file was accepted for an unrelated Minecraft version")
 	}
 	// A file that names no version at all is evidence of nothing, so it is
 	// rejected: installing a build whose target is unknown risks the exact
 	// crash the version check exists to prevent. A caller that genuinely wants
 	// "unknown means compatible" has to inspect GameVersions itself.
-	if (ModFile{FileName: "unlabelled.jar"}).Supports("26.3", LoaderFabric) {
+	if (ModFile{FileName: "unlabelled.jar"}).Supports("26.3") {
 		t.Error("a file with no version list was accepted")
 	}
 	// An empty version means "no constraint", which is what the migration path
 	// uses for an instance that declares none.
-	if !file.Supports("", LoaderFabric) {
+	if !file.Supports("") {
 		t.Error("an empty version must not reject a file")
 	}
 }
 
-// TestSupportsCannotCheckTheLoader pins a limitation rather than a virtue.
-// CurseForge records the loader on the project, never on the file, so nothing
-// in this payload says whether the build is Forge or Fabric. A caller reading
-// the answer as "this is a Fabric build" would install a Forge jar into a
-// Fabric instance, and the loader refuses that at startup with no hint about
-// the real cause. The correct filter is the project's categories, which is why
-// this assertion documents that Supports must keep saying yes.
-func TestSupportsCannotCheckTheLoader(t *testing.T) {
-	forgeOnly := ModFile{GameVersions: []string{"26.3", "Forge"}, FileName: "some-mod-forge.jar"}
-	if !forgeOnly.Supports("26.3", LoaderFabric) {
-		t.Error("Supports started rejecting on the loader; the caller that must " +
-			"filter by project category needs updating at the same time")
-	}
-	if !forgeOnly.Supports("26.3", "") {
+// TestSupportsTakesNoLoader pins the shape of the version filter. The loader is
+// a project property and asking a file about it was the B25 defect: the
+// argument was accepted and discarded, so a Forge build passed a Fabric check
+// and the resolver's loader veto quietly stopped applying. The signature itself
+// is the guarantee now — a caller cannot pass a loader and read the answer as
+// "this is a Fabric build", and the compiler stops the ones who try. What
+// replaces it is tested by TestSupportsLoaderUsesProjectCategories.
+func TestSupportsTakesNoLoader(t *testing.T) {
+	// The loader name still sits in the version list, where CurseForge puts
+	// it, and the version check must not be turned into a loader check by
+	// accident: it is the project's categories that answer that.
+	file := ModFile{GameVersions: []string{"26.3", "Forge"}, FileName: "some-mod-forge.jar"}
+	if !file.Supports("26.3") {
 		t.Error("a file built for 26.3 was rejected for 26.3")
+	}
+	if file.Supports("26.2") {
+		t.Error("a Forge file was accepted for an unrelated Minecraft version")
+	}
+
+	// A caller asking about an instance that declares no version is asking
+	// nothing, so the answer is yes and the loader question stays unanswered.
+	if !file.Supports("") {
+		t.Error("an empty version must not reject a file")
+	}
+}
+
+// TestSupportsLoaderUsesProjectCategories replaces TestSupportsCannotCheckTheLoader.
+//
+// That test pinned the defect rather than the contract: it asserted that
+// ModFile.Supports keeps answering yes for a loader it never looked at, on the
+// grounds that "the caller must filter by project category" — while nothing in
+// the API made any caller do that, and the resolver's loader veto, the one
+// mechanism that stops modharbor installing a Forge jar into a Fabric instance,
+// depended on this function and got nothing. The fix keeps the premise the
+// test recorded (the loader is not on the file) and puts the check where the
+// data actually is: the project's categories.
+func TestSupportsLoaderUsesProjectCategories(t *testing.T) {
+	// A Forge-only project is the shape that made the old filter dangerous: its
+	// files say nothing about the loader, and only the categories do.
+	forgeOnly := Mod{Categories: []Category{{ID: 1, Name: "Forge", Slug: "forge"}}}
+
+	if forgeOnly.SupportsLoader(LoaderFabric) {
+		t.Error("a Forge-only project passed a Fabric check")
+	}
+	if !forgeOnly.SupportsLoader(LoaderForge) {
+		t.Error("a Forge project was rejected for Forge")
+	}
+	// Loader names arrive from user config in whatever case, and an instance
+	// directory named "26.3-fabric-mod" supplies them that way.
+	if !forgeOnly.SupportsLoader("forge") {
+		t.Error("a lower-case loader name was not matched")
+	}
+	if forgeOnly.SupportsLoader("  NeoForge  ") {
+		t.Error("padding was not trimmed before matching")
+	}
+	// No loader named means no constraint, matching the empty game version.
+	if !forgeOnly.SupportsLoader("") {
+		t.Error("an empty loader must not reject a project")
+	}
+	// A loader CurseForge has never heard of is a loader this client cannot
+	// vouch for, so it must not be answered yes.
+	if forgeOnly.SupportsLoader("rift") {
+		t.Error("an unknown loader was reported as supported")
+	}
+}
+
+// TestLoadersReadsTheProjectCategories covers the identification of a loader
+// among a project's categories. The payload mixes loaders with class entries
+// ("Library", "Utility") and platform entries, so a name that is not a loader
+// has to be dropped rather than reported as one.
+func TestLoadersReadsTheProjectCategories(t *testing.T) {
+	tests := []struct {
+		name string
+		cats []Category
+		want []string
+	}{
+		{
+			name: "one loader among unrelated categories",
+			cats: []Category{
+				{ID: 1, Name: "Forge", Slug: "forge"},
+				{ID: 6, Name: "NeoForge", Slug: "neoforge"},
+				{ID: 999, Name: "Utility", Slug: "utility"},
+				{ID: 1000, Name: "Library", Slug: "library"},
+			},
+			want: []string{LoaderForge, LoaderNeoForge},
+		},
+		{
+			// A project that files itself under several loaders publishes
+			// several, and reporting only the first would veto the rest.
+			name: "the same loader twice is one answer",
+			cats: []Category{
+				{ID: 4, Name: "Fabric", Slug: "fabric"},
+				{ID: 4, Name: "Fabric", Slug: "fabric"},
+			},
+			want: []string{LoaderFabric},
+		},
+		{
+			// A loader added after this table was written still answers by
+			// name, which is why the name is checked before the id.
+			name: "an id the table has never seen",
+			cats: []Category{{ID: 31337, Name: "Rift", Slug: "rift"}},
+			want: nil,
+		},
+		{
+			// Category ids are only stable while CurseForge keeps its
+			// numbering, so the id is the fallback rather than the first test.
+			name: "an id that matches with no usable name",
+			cats: []Category{{ID: 5, Name: "", Slug: ""}},
+			want: []string{LoaderQuilt},
+		},
+		{name: "no categories at all", cats: nil, want: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Mod{Categories: tc.cats}.Loaders()
+			if len(got) != len(tc.want) {
+				t.Fatalf("loaders = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("loaders = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// TestForgeOnlyProjectIsVetoedForAFabricInstance is the whole B25 story as a
+// caller experiences it: pick what to install for an instance, using only what
+// this package exports.
+//
+// The fixture is deliberate. The project publishes no loader on its files at
+// all, the newest file is built for the wrong Minecraft version, and the
+// second newest is the right one. A Fabric instance must end up with nothing,
+// because installing the Forge build is what the veto exists to prevent; a Forge
+// instance must get the 26.3 build.
+func TestForgeOnlyProjectIsVetoedForAFabricInstance(t *testing.T) {
+	f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/files") {
+			fmt.Fprint(w, `[
+			  {"id": 1, "modId": 42, "fileName": "some-mod-1.0.0.jar", "fileDate": "2026-06-01T00:00:00Z",
+			   "gameVersions": ["26.1", "Forge"], "fileFingerprints": []},
+			  {"id": 2, "modId": 42, "fileName": "some-mod-1.1.0.jar", "fileDate": "2025-01-05T00:00:00Z",
+			   "gameVersions": ["26.3", "Forge"], "fileFingerprints": []}
+			]`)
+			return
+		}
+		fmt.Fprint(w, `{"id": 42, "name": "Some Mod", "slug": "some-mod",
+		  "categories": [{"id": 1, "name": "Forge", "slug": "forge"}], "latestFiles": []}`)
+	})
+	c := clientFor(f)
+
+	mod, err := c.Mod(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Mod: %v", err)
+	}
+	files, err := c.Files(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Files: %v", err)
+	}
+
+	pick := func(loader string) *ModFile {
+		for _, file := range Newest(files) {
+			if mod.SupportsLoader(loader) && file.Supports("26.3") {
+				return &file
+			}
+		}
+		return nil
+	}
+
+	if got := pick(LoaderFabric); got != nil {
+		t.Fatalf("a Forge-only project was installed into a Fabric instance: %+v", got)
+	}
+	got := pick(LoaderForge)
+	if got == nil {
+		t.Fatalf("the Forge instance got no file out of %d", len(files))
+	}
+	if got.ID != 2 || got.FileName != "some-mod-1.1.0.jar" {
+		t.Fatalf("chose file %d (%s), want the 26.3 build", got.ID, got.FileName)
 	}
 }
 
@@ -1128,7 +1330,7 @@ func TestFingerprintHydration(t *testing.T) {
 		if file.SHA512 != strings.ToLower(cfSHA512) {
 			t.Errorf("sha512 = %q, want the digest lowercased", file.SHA512)
 		}
-		if !file.Supports("26.3", LoaderFabric) {
+		if !file.Supports("26.3") {
 			t.Error("the game versions were lost")
 		}
 	})
@@ -1157,78 +1359,301 @@ func TestFingerprintHydration(t *testing.T) {
 		}
 	})
 
-	// CurseForge's named gameVersions is the more reliable list, but some
-	// files carry only sortableGameVersions.
-	t.Run("sortable versions stand in for a missing list", func(t *testing.T) {
-		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, `{"id": 2, "modId": 1, "fileName": "sortable.jar",
-			  "sortableGameVersions": ["9001", "9002"], "fileFingerprints": []}`)
+}
+
+// TestSortableGameVersionsDecodeBothShapes covers B23.
+//
+// CurseForge ships sortableGameVersions as a JSON array of numbers on some
+// endpoints and as an array of strings on others. Declared as []string, one
+// numeric file anywhere in a listing failed the decode of the whole response,
+// which took every readable sibling down with it: the project reported as
+// publishing nothing when it published hundreds of files. Both shapes now
+// decode, and neither of them costs the caller the id.
+func TestSortableGameVersionsDecodeBothShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []VersionID
+	}{
+		{name: "numbers", body: `[9001, 9002]`, want: []VersionID{"9001", "9002"}},
+		{name: "strings", body: `["9001", "9002"]`, want: []VersionID{"9001", "9002"}},
+		// A real listing can mix the two, and the client has to keep going
+		// rather than pick a side and fail the whole response.
+		{name: "mixed", body: `[9001, "9002"]`, want: []VersionID{"9001", "9002"}},
+		// A null element says nothing about the file, so it becomes no id at
+		// all rather than an id of 0, which is a real CurseForge category.
+		{name: "a null element", body: `[9001, null]`, want: []VersionID{"9001", ""}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"id": 4, "modId": 1, "fileName": "numeric.jar",
+				  "gameVersions": ["26.3"], "sortableGameVersions": %s, "fileFingerprints": []}`, tc.body)
+			})
+			file, err := clientFor(f).ModFile(context.Background(), 4)
+			if err != nil {
+				t.Fatalf("ModFile: %v", err)
+			}
+			if len(file.SortableGameVersions) != len(tc.want) {
+				t.Fatalf("ids = %v, want %v", file.SortableGameVersions, tc.want)
+			}
+			for i := range tc.want {
+				if file.SortableGameVersions[i] != tc.want[i] {
+					t.Fatalf("ids = %v, want %v", file.SortableGameVersions, tc.want)
+				}
+			}
+			// The named list is untouched by the tolerant decoding.
+			if !file.Supports("26.3") {
+				t.Error("the named version was lost")
+			}
 		})
-		file, err := clientFor(f).ModFile(context.Background(), 2)
+	}
+
+	// The damage the failure caused was not one file, it was the listing it
+	// appeared in: the readable files beside it were dropped as well.
+	t.Run("one numeric file no longer poisons the listing", func(t *testing.T) {
+		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/files") {
+				fmt.Fprint(w, `[{"id": 5, "modId": 1, "fileName": "fine.jar", "gameVersions": ["26.3"],
+				  "fileFingerprints": []}, {"id": 4, "modId": 1, "fileName": "numeric.jar",
+				  "sortableGameVersions": [9001], "fileFingerprints": []}]`)
+				return
+			}
+			// The id 9001 is not a Minecraft version the table knows, so no
+			// extra request is needed to prove the readable file survived.
+			fmt.Fprint(w, `[]`)
+		})
+
+		files, err := clientFor(f).Files(context.Background(), 1)
 		if err != nil {
-			t.Fatalf("ModFile: %v", err)
+			t.Fatalf("Files: %v", err)
 		}
-		if len(file.GameVersions) != 2 || file.GameVersions[0] != "9001" {
-			t.Fatalf("game versions = %v, want the sortable ids", file.GameVersions)
+		if len(files) != 2 {
+			t.Fatalf("expected both files, got %d: %+v", len(files), files)
 		}
-		// Pinned consequence: those values are ids, not names, so they can
-		// never equal a version string and such a file is rejected for every
-		// Minecraft version. The fix belongs in hydrateFingerprints, which
-		// should resolve the ids to names rather than copy them across.
-		if file.Supports("26.3", LoaderFabric) {
-			t.Error("a sortable id was matched against a version string")
+		if files[0].FileName != "fine.jar" || !files[0].Supports("26.3") {
+			t.Errorf("the readable file was lost: %+v", files[0])
+		}
+		if files[1].FileName != "numeric.jar" || len(files[1].SortableGameVersions) != 1 {
+			t.Errorf("the numeric file was mangled: %+v", files[1])
 		}
 	})
 
-	// CurseForge really does send sortableGameVersions as JSON numbers. With
-	// ModFile declaring []string, one such file anywhere in a listing makes the
-	// whole decode fail, taking every other file in it down with it — the
-	// project appears to publish nothing rather than to publish files
-	// modharbor cannot read. Pinned, because the fix is a type change.
-	t.Run("numeric sortable ids break the decode", func(t *testing.T) {
-		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, `{"id": 4, "modId": 1, "fileName": "numeric.jar",
-			  "sortableGameVersions": [9001, 9002], "fileFingerprints": []}`)
-		})
-		file, err := clientFor(f).ModFile(context.Background(), 4)
-		if err == nil {
-			t.Fatalf("a numeric sortableGameVersions decoded to %+v", file)
+	// Tolerance has to stop where nonsense begins, or a typo in the API's
+	// shape would be read as a version id.
+	t.Run("an entry that is neither a number nor a string is an error", func(t *testing.T) {
+		for _, body := range []string{`[true]`, `[{"id": 1}]`, `[[1]]`} {
+			f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"id": 4, "modId": 1, "sortableGameVersions": %s}`, body)
+			})
+			if _, err := clientFor(f).ModFile(context.Background(), 4); err == nil {
+				t.Errorf("sortableGameVersions %s decoded without an error", body)
+			}
 		}
-		if !strings.Contains(err.Error(), "sortableGameVersions") {
-			t.Fatalf("error %q does not say which field could not be read", err)
-		}
+	})
+}
 
-		// The same payload inside a listing poisons the whole listing.
-		f.set(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, `[{"id": 5, "modId": 1, "fileName": "fine.jar", "gameVersions": ["26.3"],
-			  "fileFingerprints": []}, {"id": 4, "modId": 1, "fileName": "numeric.jar",
+// TestSortableIDsResolveToVersionNames covers B24.
+//
+// sortableGameVersions holds ids. Copying them into the named list made every
+// entry something that can never equal a Minecraft version — "9001" is not
+// "26.3" — so a file that published only ids was rejected for every release
+// and the project read as publishing nothing compatible. The ids are resolved
+// through CurseForge's version table instead, and the answer is now correct in
+// both directions.
+func TestSortableIDsResolveToVersionNames(t *testing.T) {
+	// 4711 is 26.3; 4 is the Fabric loader category, which the version table
+	// does not know about and which the project owns anyway.
+	const payload = `{"id": 2, "modId": 1, "fileName": "sortable.jar",
+	  "sortableGameVersions": [4711, 4, "4712"], "fileFingerprints": []}`
+
+	f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1"+gameVersionsPath {
+			fmt.Fprint(w, `[
+			  {"id": 4711, "name": "26.3", "slug": "26.3", "gameId": 432},
+			  {"id": 4712, "name": "26.4", "slug": "26.4", "gameId": 432}
+			]`)
+			return
+		}
+		fmt.Fprint(w, payload)
+	})
+
+	file, err := clientFor(f).ModFile(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("ModFile: %v", err)
+	}
+
+	// A file that genuinely supports 26.3 says so...
+	if !file.Supports("26.3") {
+		t.Errorf("game versions = %v, want 26.3 resolved from its id", file.GameVersions)
+	}
+	// ...and a release it never named is still refused. A fix that answered
+	// yes to everything would pass the assertion above on its own.
+	if file.Supports("26.2") {
+		t.Errorf("a version the file never named was accepted: %v", file.GameVersions)
+	}
+	// Every id the table can resolve is resolved, so a file that targets two
+	// releases answers for both rather than only the first.
+	if !file.Supports("26.4") {
+		t.Errorf("the second id was dropped: game versions = %v", file.GameVersions)
+	}
+	// The loader category id resolves to nothing, because the version table
+	// only knows Minecraft versions. Losing it costs no check: the loader is
+	// read from the project's categories.
+	for _, v := range file.GameVersions {
+		if v == "4" || v == "Fabric" {
+			t.Errorf("a loader id leaked into the version names: %v", file.GameVersions)
+		}
+	}
+	// Nothing is thrown away: the ids stay on the file, in the shape the API
+	// published them, because they are the only stable identity a version has.
+	if len(file.SortableGameVersions) != 3 {
+		t.Errorf("ids = %v, want all three preserved", file.SortableGameVersions)
+	}
+	if file.SortableGameVersions[0] != "4711" {
+		t.Errorf("ids = %v, want the raw ids unchanged", file.SortableGameVersions)
+	}
+}
+
+// TestVersionListIsFetchedOnlyWhenItIsNeeded pins the cost of resolving ids.
+//
+// The version list is a request, and a migration asks for hundreds of files.
+// A client that fetched it eagerly would double the request budget of a whole
+// pack; one that fetched it per file would multiply it by the pack size.
+func TestVersionListIsFetchedOnlyWhenItIsNeeded(t *testing.T) {
+	serve := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1"+gameVersionsPath {
+			fmt.Fprint(w, `[{"id": 9001, "name": "26.3", "slug": "26.3", "gameId": 432}]`)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/files") {
+			fmt.Fprint(w, `[{"id": 5, "modId": 1, "fileName": "named.jar",
+			  "gameVersions": ["26.3"], "fileFingerprints": []},
+			  {"id": 4, "modId": 1, "fileName": "ids.jar",
 			  "sortableGameVersions": [9001], "fileFingerprints": []}]`)
+			return
+		}
+		fmt.Fprint(w, `{"id": 1, "modId": 1, "latestFiles": [{"id": 5, "fileName": "named.jar",
+		  "gameVersions": ["26.3"], "fileFingerprints": []}]}`)
+	}
+
+	// Names only: this case is about what a well-formed listing costs, so the
+	// fixture must contain no id-bearing file. A listing that does contain one
+	// legitimately spends a request resolving it, which is the next subtest.
+	t.Run("a listing with names costs nothing extra", func(t *testing.T) {
+		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/files") {
+				fmt.Fprint(w, `[{"id": 5, "modId": 1, "fileName": "a.jar",
+				  "gameVersions": ["26.3"], "fileFingerprints": []},
+				  {"id": 6, "modId": 1, "fileName": "b.jar",
+				  "gameVersions": ["1.20.1"], "fileFingerprints": []}]`)
+				return
+			}
+			fmt.Fprint(w, `{"id": 1, "modId": 1, "latestFiles": []}`)
 		})
-		fresh := clientFor(f)
-		if _, err := fresh.Files(context.Background(), 1); err == nil {
-			t.Error("a listing with one unreadable file was reported as complete")
+		if _, err := clientFor(f).Files(context.Background(), 1); err != nil {
+			t.Fatalf("Files: %v", err)
+		}
+		if got := f.only(t); got.Path != "/v1/mods/1/files" {
+			t.Fatalf("path = %q, want the listing alone", got.Path)
 		}
 	})
 
-	// A file carrying both lists keeps the named one; preferring the numeric
-	// ids would reject everything.
-	t.Run("named versions win over sortable ids", func(t *testing.T) {
-		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, `{"id": 3, "modId": 1, "fileName": "both.jar",
-			  "gameVersions": ["26.3"], "sortableGameVersions": ["9001"],
-			  "fileFingerprints": []}`)
-		})
-		file, err := clientFor(f).ModFile(context.Background(), 3)
+	t.Run("a listing with ids asks once, however many files", func(t *testing.T) {
+		f := newFakeCF(t, serve)
+		c := clientFor(f)
+		ctx := context.Background()
+
+		files, err := c.Files(ctx, 1)
 		if err != nil {
-			t.Fatalf("ModFile: %v", err)
+			t.Fatalf("Files: %v", err)
 		}
-		if len(file.GameVersions) != 1 || file.GameVersions[0] != "26.3" {
-			t.Fatalf("game versions = %v, want [26.3]", file.GameVersions)
+		if len(files) != 2 || !files[1].Supports("26.3") {
+			t.Fatalf("the id-bearing file was not resolved: %+v", files)
 		}
-		if !file.Supports("26.3", LoaderFabric) {
-			t.Error("the named version was discarded")
+		// A second listing must not ask again.
+		if _, err := c.Files(ctx, 1); err != nil {
+			t.Fatalf("Files again: %v", err)
+		}
+		if _, err := c.GameVersionID(ctx, "26.3"); err != nil {
+			t.Fatalf("GameVersionID: %v", err)
+		}
+
+		var versionLists int
+		for _, req := range f.recorded() {
+			if req.Path == "/v1"+gameVersionsPath {
+				versionLists++
+			}
+		}
+		if versionLists != 1 {
+			t.Fatalf("the version list was fetched %d times, want 1", versionLists)
 		}
 	})
+
+	// A version list that could not be read must not be remembered: CurseForge
+	// answers 500 while it rebuilds an index, and pinning that would leave the
+	// client blind to every release for the rest of the run.
+	t.Run("a failure is not remembered", func(t *testing.T) {
+		f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1"+gameVersionsPath {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, `{"id": 4, "modId": 1, "fileName": "ids.jar",
+			  "sortableGameVersions": [9001], "fileFingerprints": []}`)
+		})
+		c := clientFor(f)
+		ctx := context.Background()
+
+		if _, err := c.ModFile(ctx, 4); err == nil {
+			t.Fatal("a file whose versions could not be read was reported as read")
+		}
+		f.set(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1"+gameVersionsPath {
+				fmt.Fprint(w, `[{"id": 9001, "name": "26.3", "slug": "26.3", "gameId": 432}]`)
+				return
+			}
+			fmt.Fprint(w, `{"id": 4, "modId": 1, "fileName": "ids.jar",
+			  "sortableGameVersions": [9001], "fileFingerprints": []}`)
+		})
+		file, err := c.ModFile(ctx, 4)
+		if err != nil {
+			t.Fatalf("the retry did not ask again: %v", err)
+		}
+		if !file.Supports("26.3") {
+			t.Errorf("game versions = %v, want 26.3 resolved after the retry", file.GameVersions)
+		}
+	})
+}
+
+// TestNamedVersionsWinOverSortableIDs covers a file that publishes both lists.
+// The names win: the ids are a second encoding of the same list, and preferring
+// them would replace every readable version with an id that matches nothing.
+func TestNamedVersionsWinOverSortableIDs(t *testing.T) {
+	f := newFakeCF(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1"+gameVersionsPath {
+			t.Error("the version list was fetched for a file that published names")
+			fmt.Fprint(w, `[{"id": 9001, "name": "26.1", "slug": "26.1", "gameId": 432}]`)
+			return
+		}
+		fmt.Fprint(w, `{"id": 3, "modId": 1, "fileName": "both.jar",
+		  "gameVersions": ["26.3"], "sortableGameVersions": [9001], "fileFingerprints": []}`)
+	})
+
+	file, err := clientFor(f).ModFile(context.Background(), 3)
+	if err != nil {
+		t.Fatalf("ModFile: %v", err)
+	}
+	if len(file.GameVersions) != 1 || file.GameVersions[0] != "26.3" {
+		t.Fatalf("game versions = %v, want [26.3]", file.GameVersions)
+	}
+	if !file.Supports("26.3") {
+		t.Error("the named version was discarded")
+	}
+	if file.Supports("26.1") {
+		t.Error("the id list overrode the names CurseForge published")
+	}
 }
 
 // TestNewestOrdersAndCopies covers the ordering helper on the inputs a real

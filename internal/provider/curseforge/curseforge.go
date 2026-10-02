@@ -10,6 +10,7 @@
 package curseforge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,16 @@ const UserAgent = "modharbor/1.0 (https://github.com/MohammadMD1383/modharbor)"
 // ErrNoAPIKey is returned when an operation needs a key that is not set.
 var ErrNoAPIKey = errors.New("curseforge: no API key configured (run `modharbor config set curseforge.apiKey <key>`)")
 
+// ErrNullResponse reports a successful request whose body is the JSON literal
+// null.
+//
+// It is an error rather than an empty result because the two mean different
+// things to a caller: an empty listing says this mod publishes no file for the
+// requested version, while null says CurseForge answered with nothing at all.
+// Decoding null produces a zero project with no error, and the caller then
+// reports "this mod publishes nothing" for a mod that is perfectly healthy.
+var ErrNullResponse = errors.New("curseforge: the API answered null instead of the requested resource")
+
 // Loader names as CurseForge spells them.
 const (
 	LoaderFabric   = "FABRIC"
@@ -42,33 +53,43 @@ const (
 
 // File is a downloadable artifact.
 type File struct {
-	ID                   int64    `json:"id"`
-	GameID               int64    `json:"gameId"`
-	FileName             string   `json:"fileName"`
-	FileType             int      `json:"fileType"`
-	FileDate             string   `json:"fileDate"`
-	FileSize             int64    `json:"fileSize"`
-	FileFingerprints     []int64  `json:"fileFingerprints"`
-	DownloadCount        int64    `json:"downloadCount"`
-	DownloadURL          *string  `json:"downloadUrl"`
-	IsServerPack         bool     `json:"isServerPack"`
-	ServerPackFileID     *int64   `json:"serverPackFileId"`
-	SortableGameVersions []string `json:"sortableGameVersions"`
-	GameVersions         []int    `json:"gameVersions"`
+	ID                   int64       `json:"id"`
+	GameID               int64       `json:"gameId"`
+	FileName             string      `json:"fileName"`
+	FileType             int         `json:"fileType"`
+	FileDate             string      `json:"fileDate"`
+	FileSize             int64       `json:"fileSize"`
+	FileFingerprints     []int64     `json:"fileFingerprints"`
+	DownloadCount        int64       `json:"downloadCount"`
+	DownloadURL          *string     `json:"downloadUrl"`
+	IsServerPack         bool        `json:"isServerPack"`
+	ServerPackFileID     *int64      `json:"serverPackFileId"`
+	SortableGameVersions []VersionID `json:"sortableGameVersions"`
+	// GameVersions is this endpoint's list of ids. Unlike ModFile.GameVersions
+	// it is numeric by nature: the game file endpoint never publishes names.
+	GameVersions []int `json:"gameVersions"`
 }
 
 // ModFile is a published file version of a mod.
 type ModFile struct {
-	ID                   int64         `json:"id"`
-	GameID               int64         `json:"gameId"`
-	ModID                int64         `json:"modId"`
-	DisplayName          string        `json:"displayName"`
-	FileName             string        `json:"fileName"`
-	FileDate             string        `json:"fileDate"`
-	FileLength           int64         `json:"fileLength"`
-	DownloadURL          *string       `json:"downloadUrl"`
-	GameVersions         []string      `json:"gameVersions"`
-	SortableGameVersions []string      `json:"sortableGameVersions"`
+	ID          int64   `json:"id"`
+	GameID      int64   `json:"gameId"`
+	ModID       int64   `json:"modId"`
+	DisplayName string  `json:"displayName"`
+	FileName    string  `json:"fileName"`
+	FileDate    string  `json:"fileDate"`
+	FileLength  int64   `json:"fileLength"`
+	DownloadURL *string `json:"downloadUrl"`
+	// GameVersions is the readable list CurseForge publishes for a mod file:
+	// Minecraft version names ("26.3") with the loader ("Fabric") mixed in.
+	// When the payload carries none, it is filled from the ids below, because
+	// this is the field a caller compares against a version string.
+	GameVersions []string `json:"gameVersions"`
+	// SortableGameVersions is the same list as ids, game versions mixed with
+	// loader categories. It is kept because it is the only list a loader-agnostic
+	// file ever publishes, and because an id is the stable identity of a version
+	// across the renames CurseForge applies to snapshots.
+	SortableGameVersions []VersionID   `json:"sortableGameVersions"`
 	Dependencies         []Dependency  `json:"dependencies"`
 	ReleaseType          int           `json:"releaseType"`
 	Fingerprints         []Fingerprint `json:"fileFingerprints"`
@@ -144,8 +165,19 @@ type Error struct {
 	URL        string
 }
 
+// Error names the request that failed, not just the status.
+//
+// A user migrating a pack has no way to attach a bare "503" to a file: the
+// status alone does not say which of the hundred requests modharbor made
+// failed, and the project id that would identify it lives in the path.
 func (e *Error) Error() string {
-	return fmt.Sprintf("curseforge: %d %s", e.StatusCode, e.Message)
+	msg := strings.TrimSpace(e.Message)
+	if msg == "" {
+		// A 5xx with an empty body is the common shape: there is nothing from
+		// the server to quote, so the status text is all that can be said.
+		msg = strings.TrimSpace(http.StatusText(e.StatusCode))
+	}
+	return fmt.Sprintf("curseforge: %d %s [%s]", e.StatusCode, msg, e.URL)
 }
 
 // ErrNotFound signals a missing project or file.
@@ -160,7 +192,38 @@ type Client struct {
 
 	mu       sync.RWMutex
 	fileByID map[int64]*ModFile
+
+	// versionsMu guards versions, which is filled by a request rather than by a
+	// decode. It is separate from mu so that waiting for the version list does
+	// not block every cache hit in the pack behind it.
+	versionsMu sync.Mutex
+	versions   *versionTable
 }
+
+// gameVersion is one row of the game version list.
+type gameVersion struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Slug     string `json:"slug"`
+	GameID   int64  `json:"gameId"`
+	Sortable int    `json:"sortableGameVersion"`
+}
+
+// versionTable indexes CurseForge's game version list both ways: the resolver
+// asks for the id behind a version name, and the file decoder asks for the name
+// behind an id.
+type versionTable struct {
+	list  []gameVersion
+	names map[VersionID]string
+}
+
+// The game endpoints repeat the id 432 that GameIDMinecraft holds, because a
+// const expression cannot call strconv and building these per call would be
+// noise at every use site.
+const (
+	gameVersionsPath   = "/games/432/versions"
+	gameCategoriesPath = "/games/432/categories"
+)
 
 // Options configures a Client.
 type Options struct {
@@ -242,8 +305,11 @@ func (c *Client) do(ctx context.Context, path string, query url.Values, out any)
 	if err != nil {
 		return err
 	}
-	if out == nil {
-		return nil
+	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
+		// A 200 whose body is null decodes into a zero value without an
+		// error, which is indistinguishable from a project that genuinely has
+		// nothing to publish. Naming the endpoint is what tells the two apart.
+		return fmt.Errorf("%w: %s", ErrNullResponse, target)
 	}
 	return json.Unmarshal(b, out)
 }
@@ -255,7 +321,9 @@ func (c *Client) Mod(ctx context.Context, id int64) (*Mod, error) {
 		return nil, err
 	}
 	for i := range m.LatestFiles {
-		hydrateFingerprints(&m.LatestFiles[i])
+		if err := c.hydrate(ctx, &m.LatestFiles[i]); err != nil {
+			return nil, err
+		}
 		c.remember(&m.LatestFiles[i])
 	}
 	return &m, nil
@@ -273,7 +341,9 @@ func (c *Client) Files(ctx context.Context, modID int64) ([]ModFile, error) {
 		return nil, err
 	}
 	for i := range out {
-		hydrateFingerprints(&out[i])
+		if err := c.hydrate(ctx, &out[i]); err != nil {
+			return nil, err
+		}
 		c.remember(&out[i])
 	}
 	return out, nil
@@ -292,7 +362,9 @@ func (c *Client) ModFile(ctx context.Context, fileID int64) (*ModFile, error) {
 	if err := c.do(ctx, "/files/"+strconv.FormatInt(fileID, 10), nil, &f); err != nil {
 		return nil, err
 	}
-	hydrateFingerprints(&f)
+	if err := c.hydrate(ctx, &f); err != nil {
+		return nil, err
+	}
 	c.remember(&f)
 	return &f, nil
 }
@@ -322,21 +394,12 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Mod, er
 // GameVersionID resolves a Minecraft version string such as "26.3" to its
 // numeric id, which the CurseForge API uses everywhere.
 func (c *Client) GameVersionID(ctx context.Context, mcVersion string) (int64, error) {
-	q := url.Values{}
-	q.Set("gameId", "432")
-
-	var versions []struct {
-		ID       int64  `json:"id"`
-		Name     string `json:"name"`
-		Slug     string `json:"slug"`
-		GameID   int64  `json:"gameId"`
-		Sortable int    `json:"sortableGameVersion"`
-	}
-	if err := c.do(ctx, "/games/432/versions", q, &versions); err != nil {
+	versions, err := c.gameVersionTable(ctx)
+	if err != nil {
 		return 0, err
 	}
 	want := strings.TrimSpace(mcVersion)
-	for _, v := range versions {
+	for _, v := range versions.list {
 		if strings.EqualFold(v.Name, want) {
 			return v.ID, nil
 		}
@@ -350,10 +413,10 @@ func (c *Client) LoaderID(ctx context.Context, loader string) (int64, error) {
 		return id, nil
 	}
 	q := url.Values{}
-	q.Set("gameId", "432")
+	q.Set("gameId", strconv.Itoa(GameIDMinecraft))
 
 	var cats []Category
-	if err := c.do(ctx, "/games/432/categories", q, &cats); err != nil {
+	if err := c.do(ctx, gameCategoriesPath, q, &cats); err != nil {
 		return 0, err
 	}
 	want := strings.ToUpper(loader)
@@ -365,12 +428,54 @@ func (c *Client) LoaderID(ctx context.Context, loader string) (int64, error) {
 	return 0, fmt.Errorf("curseforge: unknown loader %q", loader)
 }
 
+// gameVersionTable fetches the game version list at most once per client.
+//
+// Every file in a listing that publishes ids instead of names needs it, so a
+// request per file would multiply the request budget of a migration by the size
+// of the pack. Concurrent callers wait on the one fetch rather than issuing
+// their own, which is the only behaviour this memoisation changes: a client
+// used to ask for the version list again on every lookup.
+//
+// A failure is not remembered. CurseForge answers 500 while it rebuilds an
+// index, and pinning that would turn one hiccup into a permanently blind client.
+func (c *Client) gameVersionTable(ctx context.Context) (*versionTable, error) {
+	c.versionsMu.Lock()
+	defer c.versionsMu.Unlock()
+	if c.versions != nil {
+		return c.versions, nil
+	}
+
+	q := url.Values{}
+	q.Set("gameId", strconv.Itoa(GameIDMinecraft))
+
+	var list []gameVersion
+	if err := c.do(ctx, gameVersionsPath, q, &list); err != nil {
+		return nil, err
+	}
+	names := make(map[VersionID]string, len(list))
+	for _, v := range list {
+		names[VersionID(strconv.FormatInt(v.ID, 10))] = v.Name
+	}
+	c.versions = &versionTable{list: list, names: names}
+	return c.versions, nil
+}
+
 var knownLoaderIDs = map[string]int64{
 	LoaderFabric:   4,
 	LoaderForge:    1,
 	LoaderNeoForge: 6,
 	LoaderQuilt:    5,
 }
+
+// knownLoaderNames inverts knownLoaderIDs for recognising a loader among a
+// project's categories, where only the id arrives.
+var knownLoaderNames = func() map[int]string {
+	out := make(map[int]string, len(knownLoaderIDs))
+	for name, id := range knownLoaderIDs {
+		out[int(id)] = name
+	}
+	return out
+}()
 
 // ClassID is the category id for mods.
 const ClassID = 6
@@ -389,32 +494,120 @@ func hydrateFingerprints(f *ModFile) {
 			f.SHA512 = strings.ToLower(fp.Value)
 		}
 	}
-	// SortableGameVersions is the more reliable MC version list.
-	if len(f.GameVersions) == 0 && len(f.SortableGameVersions) > 0 {
-		f.GameVersions = f.SortableGameVersions
-	}
 }
 
-// Supports reports whether the file targets a Minecraft version and loader.
-func (f ModFile) Supports(mcVersion, loader string) bool {
-	if mcVersion != "" {
-		ok := false
-		for _, v := range f.GameVersions {
-			if strings.EqualFold(v, mcVersion) {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return false
+// hydrate completes a decoded file. It is a method because resolving the ids
+// a file published may need the version list, and that is a request rather than
+// a decode.
+func (c *Client) hydrate(ctx context.Context, f *ModFile) error {
+	hydrateFingerprints(f)
+	return c.resolveGameVersions(ctx, f)
+}
+
+// resolveGameVersions spells out the ids a file published instead of names.
+//
+// sortableGameVersions is a list of ids, so copying it into GameVersions makes
+// every entry something that can never equal a Minecraft version string:
+// "432" is not "26.3", and the file was then rejected for every release while
+// the project still appeared to publish it. The ids are resolved through
+// CurseForge's own version table instead, and the raw ids stay on the file.
+//
+// Loader category ids resolve to nothing here, because the version list only
+// knows Minecraft versions. That loses nothing: the loader is a property of the
+// project and is checked there, by Mod.SupportsLoader.
+func (c *Client) resolveGameVersions(ctx context.Context, f *ModFile) error {
+	if len(f.GameVersions) > 0 || len(f.SortableGameVersions) == 0 {
+		return nil
+	}
+	table, err := c.gameVersionTable(ctx)
+	if err != nil {
+		// Reported rather than swallowed: a file whose target versions could
+		// not be read is not a file that supports nothing, and failing the
+		// listing tells the user something is wrong where silence would tell
+		// them the mod has no compatible build.
+		return err
+	}
+	for _, id := range f.SortableGameVersions {
+		if name, ok := table.names[id]; ok {
+			f.GameVersions = append(f.GameVersions, name)
 		}
 	}
-	if loader != "" {
-		// Loader targeting lives on the project, not the file, so this is
-		// only a hint for the caller.
-		_ = loader
+	return nil
+}
+
+// Supports reports whether the file targets a Minecraft version.
+//
+// There is deliberately no loader parameter. CurseForge files loader targeting
+// on the project, and although a file repeats the loader name inside its own
+// version list, a library or a datapack names none at all, so a file cannot
+// speak for it. Accepting a loader and ignoring it was the worse arrangement:
+// a Forge build passed a Fabric check and the veto in the resolver — the one
+// mechanism that stops modharbor installing the wrong loader — quietly stopped
+// applying. Use Mod.SupportsLoader for the loader half.
+func (f ModFile) Supports(mcVersion string) bool {
+	if mcVersion == "" {
+		return true
 	}
-	return true
+	for _, v := range f.GameVersions {
+		if strings.EqualFold(v, mcVersion) {
+			return true
+		}
+	}
+	return false
+}
+
+// SupportsLoader reports whether the project publishes builds for a loader.
+//
+// A project that names no loader category is reported as unsupported rather
+// than as supported, because this package reads absent evidence as rejection
+// everywhere else: a file with no version list is not treated as compatible.
+// Loaders exposes the categories for the caller that needs to tell "published
+// none" apart from "published, and not yours".
+func (m Mod) SupportsLoader(loader string) bool {
+	loader = strings.ToUpper(strings.TrimSpace(loader))
+	if loader == "" {
+		return true
+	}
+	for _, l := range m.Loaders() {
+		if l == loader {
+			return true
+		}
+	}
+	return false
+}
+
+// Loaders returns the loaders a project publishes builds for, spelled the way
+// CurseForge does (LoaderFabric and friends).
+func (m Mod) Loaders() []string {
+	out := make([]string, 0, len(m.Categories))
+	seen := map[string]bool{}
+	for _, cat := range m.Categories {
+		name := loaderCategoryName(cat)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+// loaderCategoryName recognises a loader among a project's categories, which
+// also hold class ("Library", "Utility") and platform entries.
+//
+// The slug and the name are checked before the id because a loader id is only
+// stable as long as CurseForge keeps its numbering; a loader added after this
+// table was written still answers by name.
+func loaderCategoryName(cat Category) string {
+	for known := range knownLoaderIDs {
+		if strings.EqualFold(cat.Slug, known) || strings.EqualFold(cat.Name, known) {
+			return known
+		}
+	}
+	if name, ok := knownLoaderNames[cat.ID]; ok {
+		return name
+	}
+	return ""
 }
 
 // Newest sorts files newest-first by their file date.

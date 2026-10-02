@@ -1,0 +1,26 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.test
+*.out
+coverage.out
+coverage.html
+profile.cgo
+
+# Local modharbor artifacts (jars and instances are never ignored)
+/.modharbor-backup/
+.modharbor-dl-*
+.modharbor-cp-*
+.state-*.json
+/modharbor
+
+# Editor and OS cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

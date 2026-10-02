@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The CI workflow only ever needs to read the repository. Release tags get
+# their own workflow with `contents: write`.
+permissions:
+  contents: read
+
+# Superseded PR runs are cancelled; main is never cancelled so a merge commit
+# always gets a complete check.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 1.23.x is the minimum supported version and matches `go 1.23.0` in
+        # go.mod; 1.24.x is the previous release; stable is the tip.
+        go: ['1.23.x', '1.24.x', 'stable']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # The matrix supplies the version rather than go-version-file:
+          # `go-version-file: go.mod` pins every leg to the single version
+          # recorded in go.mod and would make the matrix a no-op. go.mod is
+          # still the source of truth for the supported floor, and the 1.23.x
+          # leg is what proves the project builds on it.
+          go-version: ${{ matrix.go }}
+          check-latest: true
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Show toolchain
+        run: go version
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: gofmt
+        # Git Bash is present on the Windows runners; the default shell there
+        # is PowerShell, which does not understand this assertion.
+        shell: bash
+        run: |
+          out="$(gofmt -l internal/ cmd/)"
+          if [ -n "$out" ]; then
+            echo "::error::gofmt reported files that are not formatted"
+            printf '%s\n' "$out" | while read -r f; do
+              echo "::error file=${f}::run 'gofmt -w ${f}'"
+            done
+            exit 1
+          fi
+          echo "gofmt: clean"
+
+      # -race on windows/amd64 needs cgo and a C compiler; the mingw-w64
+      # toolchain is part of the windows runner image.
+      - name: Test
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload coverage profile
+        # upload-artifact@v4 refuses duplicate artifact names, so only the
+        # canonical leg (linux + stable) publishes one.
+        if: matrix.os == 'ubuntu-latest' && matrix.go == 'stable'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: error
+          retention-days: 14
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # No matrix here, so the version genuinely comes from go.mod.
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      # golangci-lint is used because `go vet` alone misses real bugs
+      # (staticcheck, unused code, ineffective assignments). The repo has no
+      # .golangci.yml, so the linter set is pinned here instead of in a config
+      # file. `govet` overlaps with the `vet` step in the test job on purpose:
+      # the test job runs on three operating systems, this one runs once on
+      # Linux with the full analyser set. Should the project ever want to drop
+      # the third-party action, replace this step with `go vet ./...` plus
+      # `gofmt -l internal/ cmd/`, which is exactly what the test job does.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: >-
+            --timeout=5m
+            --default=none
+            --enable=govet
+            --enable=staticcheck
+            --enable=ineffassign
+            --enable=unused

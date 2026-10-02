@@ -1,0 +1,91 @@
+# goreleaser configuration for modharbor.
+#
+# https://goreleaser.com — run `goreleaser release --snapshot --clean` locally to
+# check the whole pipeline without publishing anything.
+version: 2
+
+project_name: modharbor
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: modharbor
+    main: ./cmd/modharbor
+    binary: modharbor
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/MohammadMD1383/modharbor/internal/version.Version={{ .Version }}
+      - -X github.com/MohammadMD1383/modharbor/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/MohammadMD1383/modharbor/internal/version.Date={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: binaries
+    ids:
+      - modharbor
+    # tar.gz everywhere, except Windows below.
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      # The trailing wildcard tolerates these files not existing yet.
+      - LICENSE*
+      - README.md*
+      - CHANGELOG.md*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+# .deb and .rpm for Linux. goreleaser only ever packages the linux artifacts
+# produced by the build above.
+nfpms:
+  - id: packages
+    ids:
+      - modharbor
+    formats:
+      - deb
+      - rpm
+    maintainer: MohammadMD1383
+    homepage: https://github.com/MohammadMD1383/modharbor
+    description: >-
+      modharbor finds, updates and migrates Minecraft mods: it identifies each
+      installed jar against Modrinth, resolves the newest build compatible with
+      your Minecraft version and loader, verifies the download and replaces the
+      old jar safely.
+    section: default
+    priority: optional
+    bindir: /usr/bin
+    # Docs are added to the packages under /usr/share/doc/modharbor once the
+    # repository has a README.md and LICENSE; nfpm fails on a glob that
+    # matches nothing, so they are intentionally not referenced yet.
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  prerelease: auto

@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build a release from, for example v1.2.3'
+        required: true
+        type: string
+
+# goreleaser creates the GitHub release and pushes nothing else.
+permissions:
+  contents: write
+
+# One release per tag. Overlapping runs are serialised rather than cancelled:
+# cancelling a half-finished goreleaser run would leave a truncated release.
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # On a tag push github.ref_name is the tag; on workflow_dispatch the tag
+  # comes from the input.
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: build gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Resolve tag
+        shell: bash
+        run: |
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag to release (set the 'tag' input when dispatching manually)"
+            exit 1
+          fi
+          echo "releasing $TAG"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+  release:
+    name: goreleaser
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # goreleaser needs the full history and all tags to generate the
+          # changelog and to derive the version.
+          fetch-depth: 0
+          ref: ${{ env.TAG }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # goreleaser creates the release; this step attaches the archives and
+      # packages. Unmatched patterns are tolerated because a run may legitimately
+      # produce only some of the formats (fail_on_unmatched_files: false).
+      - name: Attach release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: modharbor ${{ env.TAG }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          fail_on_unmatched_files: false
+          files: |
+            dist/*_checksums.txt
+            dist/checksums.txt
+            dist/*.deb
+            dist/*.rpm
+            dist/*_linux_*.tar.gz
+            dist/*_darwin_*.tar.gz
+            dist/*_windows_*.zip

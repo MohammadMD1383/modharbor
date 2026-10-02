@@ -61,9 +61,11 @@ default when an instance is in scope, so results are installable as-is.
 
 			// When an instance is in scope, filter results to versions that
 			// are actually installable there. Failing to resolve one is fine:
-			// search should still work without a Minecraft directory.
+			// search should still work without a Minecraft directory, so this
+			// goes through the same resolution path as every other command and
+			// discards the error rather than reporting a message it will not act on.
 			var mcVersion string
-			if inst, err := a.ResolveInstance(flagInstance); err == nil {
+			if inst, err := resolveInstance(a, nil); err == nil {
 				mcVersion = inst.MCVersion
 				if opts.Loader == "" {
 					opts.Loader = loaderName(inst.Type)

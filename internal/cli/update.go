@@ -50,9 +50,9 @@ everything, or --dry-run to see the list first.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			st, err := a.State()

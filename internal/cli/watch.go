@@ -88,9 +88,9 @@ to stop; a terminal hangup ends it just as cleanly.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			// SIGINT and SIGTERM unwind through the same path as a cancelled

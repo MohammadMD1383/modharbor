@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/MohammadMD1383/modharbor/internal/app"
 	"github.com/MohammadMD1383/modharbor/internal/instance"
 )
 
@@ -47,14 +48,37 @@ func filepathBase(p string) string { return filepath.Base(p) }
 // statFile returns file info, or nil when unavailable.
 func statFile(p string) (os.FileInfo, error) { return os.Stat(p) }
 
-// requireInstanceArg resolves an instance from args, erroring with a helpful
-// message when the argument is missing.
+// requireInstanceArg resolves an instance reference from args, erroring with a
+// helpful message when neither the argument nor the flag names one.
 func requireInstanceArg(args []string) (string, error) {
 	ref := pickInstanceArg(args)
 	if ref == "" {
 		return "", errNoInstance
 	}
 	return ref, nil
+}
+
+// resolveInstance turns a command's arguments into the instance it should act
+// on, and is the single path every instance-taking command resolves through so
+// the missing-instance message never varies between them.
+//
+// An empty reference is not yet a failure: the configured defaultInstance is
+// about to be applied, and failing first would break every user who set one.
+// Only once there is no default either does errNoInstance surface — which is
+// why this cannot live inside requireInstanceArg, which sees no config.
+//
+// Commands that parse the instance out of a mixed argument list (`add sodium
+// 26.3-fabric-mod`) pass the reference their own parsing settled on as the
+// sole element, which is exactly what pickInstanceArg returns for it.
+//
+// The error is returned rather than wrapped in fail so that Execute still
+// recognises it and adds the "try: modharbor instances" hint.
+func resolveInstance(a *app.App, args []string) (*instance.Info, error) {
+	ref, err := requireInstanceArg(args)
+	if err != nil && a.Config.DefaultInstance == "" {
+		return nil, err
+	}
+	return a.ResolveInstance(ref)
 }
 
 // errNoInstance is returned when no instance could be determined.

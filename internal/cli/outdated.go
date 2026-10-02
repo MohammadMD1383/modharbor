@@ -50,9 +50,9 @@ Only versions compatible with your exact Minecraft release are considered, so a
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			rows, err := scanInstance(cmd.Context(), a, inst, false)

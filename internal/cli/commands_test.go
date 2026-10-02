@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -414,12 +415,11 @@ func TestDoctorDiagnosesDuplicateJarsAsAnError(t *testing.T) {
 	}
 }
 
-// The doctor report is the one --json payload whose findings carry no content.
-// The finding struct's fields are unexported, so encoding/json emits `{}` for
-// each one and every severity, title and fix is lost on the wire. That makes
-// the counts the whole of the machine-readable output, so this asserts them
-// exactly. The finding text itself is asserted above, through diagnose, which
-// is the only place it still exists.
+// The counts in a doctor report are what a script reads first, so this pins
+// them. It used to assert the opposite of the truth about the exit status: an
+// error finding made `doctor --json` report success, which is defect B20. The
+// status itself, and the finding bodies that now reach the wire, are asserted
+// in json_test.go.
 func TestDoctorJsonReportsAnErrorCountForDuplicateJars(t *testing.T) {
 	const instID = "26.3-fabric-mod"
 
@@ -430,8 +430,12 @@ func TestDoctorJsonReportsAnErrorCountForDuplicateJars(t *testing.T) {
 	})
 	writeTestConfig(t, mcDir, fx.API())
 
+	// The failure is the expected verdict here: an error finding fails the run
+	// whether or not the caller asked for JSON. The payload still has to be
+	// whole on stdout for the counts below to be readable at all.
 	out, err := captureCLI(t, "doctor", instID, "--json")
-	if err != nil {
+	var silent *silentError
+	if !errors.As(err, &silent) {
 		t.Fatalf("doctor --json: %v\n%s", err, out)
 	}
 
@@ -447,9 +451,10 @@ func TestDoctorJsonReportsAnErrorCountForDuplicateJars(t *testing.T) {
 	}
 }
 
-// doctorReportJSON mirrors the wire form of a doctor report. The production
-// doctorReport has an unexported-fields element in its findings slice, so it
-// cannot be decoded into directly.
+// doctorReportJSON mirrors the summary half of the wire form of a doctor
+// report. Findings stay untyped because this test is about the counts;
+// json_test.go decodes the finding bodies, which is where the shape of a
+// finding on the wire is pinned.
 type doctorReportJSON struct {
 	Instance string
 	Errors   int

@@ -39,9 +39,9 @@ to. Pass --offline to guarantee no network requests.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			rows, err := scanInstance(cmd.Context(), a, inst, force)

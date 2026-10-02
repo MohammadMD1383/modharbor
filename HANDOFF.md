@@ -133,7 +133,8 @@ there are trivial and mechanical.
   hold an API key. State/cache: `$XDG_DATA_HOME/modharbor/state.json`.
 - The author's real Minecraft instances are at
   `/home/mohammad/.minecraft/versions/26.2-fabric-mod` and `26.3-fabric-mod`,
-  managed by **TLauncher**.
+  managed by **TLauncher**. `26.3-fabric-mod` is in active play — hands off
+  entirely. Work in `/tmp`; see the section below.
 
 ### Never do these in a test
 
@@ -148,7 +149,33 @@ t.Setenv("XDG_DATA_HOME", t.TempDir())
 Use `httptest.NewServer` for the API, never the live one. `internal/ui` writes
 to `os.Stdout`; capture it with `ui.SetWriters(buf, buf)` where output matters.
 
-### Never `cd` into a real instance directory
+### The real Minecraft instances are OFF LIMITS
+
+**`26.3-fabric-mod` is in active use — the owner is playing the game on it
+right now. Do not read, write, list, scan, or run any modharbor command
+against it. Do not `cd` into it. Do not `ls` it. Nothing.**
+
+`26.2-fabric-mod` is the source instance and equally hands-off.
+
+Build test instances under `/tmp` instead:
+
+```bash
+SCRATCH=$(mktemp -d /tmp/mh-XXXXXX)
+mkdir -p "$SCRATCH/versions/testinst/mods"
+# minimal <id>.json + TLauncherAdditional.json, then:
+export MODHARBOR_MINECRAFT_DIR="$SCRATCH" \
+       XDG_CONFIG_HOME="$SCRATCH/cfg" XDG_DATA_HOME="$SCRATCH/data"
+```
+
+That is the only permitted way to exercise a command end to end. `mktemp -d`
+under `/tmp` and full env redirection means no test can reach the real game
+even by accident.
+
+For the rare read-only sanity check the owner has asked for, ask first — and
+prefer `ls` with an absolute path over `cd`, and count jars rather than
+touching them.
+
+### Why this is written down
 
 On 2026-10-02 two stray jars (`fabric-api-0.161.0%2B26.3.jar`,
 `sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar`) appeared in the real
@@ -156,13 +183,11 @@ On 2026-10-02 two stray jars (`fabric-api-0.161.0%2B26.3.jar`,
 would crash the game on launch. The `%2B` URL-encoding proves they were saved
 from a CDN URL basename (`curl -O` style), not by modharbor, which always uses
 the API-provided filename. Most likely an agent fetched fixture jars while its
-working directory was the real `mods/` folder. They were deleted; the
-instance is back to 23 jars and `doctor` is clean.
+working directory was the real `mods/` folder. They were deleted and the
+instance verified clean. That must not happen while the game is running.
 
-Rules so this cannot recur: never set your working directory inside
-`~/.minecraft`; fetch fixture jars only with an explicit output path
-(`curl -o "$SCRATCH/..."`, never `curl -O`); after any hand-testing, confirm
-`26.2-fabric-mod/mods` still has 33 jars and `26.3-fabric-mod/mods` has 23.
+Also never `curl -O` into a directory — it saves the URL's escaped basename.
+Always `curl -o "$SCRATCH/…"`.
 
 ### UI helper contract
 

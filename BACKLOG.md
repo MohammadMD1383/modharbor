@@ -56,12 +56,12 @@ a single character.
 Fixed (T1): column removed. The title identifies the project and
 `modharbor info` prints the slug when it is needed.
 
-### [ ] B7. `export` constructs its own Modrinth client
-`internal/mrpack/export.go` calls `config.Load("")` directly instead of
-taking the client the app already built, so a user's configured base URL or
-User-Agent is ignored, and it re-reads config from disk mid-command.
-
-Fix: accept a `*modrinth.Client` parameter, matching `Install`.
+### [x] B7. `export` constructs its own Modrinth client
+Was calling `config.Load("")` mid-command, so a configured base URL was
+ignored. `Export` now takes a `*modrinth.Client` like `Install`, and
+`config.Load("")` is gone from the export path. Regression test asserts a
+decoy client in the XDG config receives nothing while the app's stub receives
+the requests (T5, `19d83b2`).
 
 ---
 
@@ -105,9 +105,16 @@ Vanilla instances have no loader, so every command falls back to `fabric`.
 Expose `--loader` as a global flag so `modharbor outdated --loader forge`
 works against a modded folder with no version JSON.
 
-### [ ] B13. Report download progress
-`add` and `install` do not use the existing `ui.Progress` bar. Downloads of
-50+ MB jars with no progress indication look like a hang.
+### [x] B13. Report download progress
+`fetchFile` now takes a `*transfer` and drives the `ui.Progress` bar that
+existed but was never used. `Done` is deferred immediately after the bar is
+created, so every return path — including a checksum mismatch — clears the
+line instead of leaving a stuck bar. Progress goes to stderr and is suppressed
+under `--json`/`--quiet` (T4, `993eb1d`).
+
+`import` still downloads silently: its transfer would have to live in
+`internal/mrpack`, out of scope for T4. The plumbing is shaped to thread
+through when that package is next touched.
 
 ---
 
@@ -125,7 +132,11 @@ concurrent dual-pipe drain, since the original single pipe could deadlock, and
 proved isolation by running the suite inside `unshare -rm` with the real
 `~/.minecraft` bind-masked.
 
-### [ ] B19. `doctor --json` emits `{}` for every finding
+### [x] B19. `doctor --json` emits `{}` for every finding
+Was: `finding`'s unexported fields meant `encoding/json` skipped them, so
+severity, title, detail and fix never reached the wire. Fixed (T8, `2ade665`)
+with a `findingJSON` type and a `MarshalJSON` method, which exports the fields
+without opening them to the rest of the package.
 `finding` has four unexported fields, so `encoding/json` writes empty objects.
 Real output on a broken-jar instance:
 
@@ -136,22 +147,25 @@ Real output on a broken-jar instance:
 Severity, title, detail and fix never reach the wire, so `doctor --json` is
 unusable for automation — the counts are the entire machine-readable output.
 
-### [ ] B20. `doctor --json` always exits 0
-`return printJSON(rep)` short-circuits before `exitWithCode(1, nil)`, so
-error-severity findings do not affect the exit status in `--json` mode while
-the human path exits 1. A script gets a different verdict depending on a
-formatting flag.
+### [x] B20. `doctor --json` always exits 0
+Was: `return printJSON(rep)` short-circuited before `exitWithCode(1, nil)`, so
+a script got a different verdict from the same run depending on a formatting
+flag. Fixed (T8): the payload is encoded first, then the exit status applied.
+Verified: human and `--json` both exit 1 on an error finding.
 
-### [ ] B21. `projectKey` mis-parses a URL with a trailing slash *and* a query
-The trailing slash is trimmed before the query string, so
-`https://modrinth.com/mod/lithium/?tab=versions` yields `"lithium/"`, which
-404s. Slash-before-query works; together they do not.
+### [x] B21. `projectKey` mis-parses a URL with a trailing slash *and* a query
+Was: the trailing slash was trimmed first, so
+`https://modrinth.com/mod/lithium/?tab=versions` yielded `"lithium/"`, which
+404s. Fixed (T8) by stripping the query first. T8 also found a fourth missing
+URL form — `http://…/project/`, which modrinth.com serves. Reverting the
+ordering fails six subtests.
 
-### [ ] B22. The better "no instance" error is unreachable dead code
-`requireInstanceArg` and `missingInstanceError` are written, documented and
-tested, but no command calls them, so `Execute`'s `try: modharbor instances`
-hint can never fire. Users get `ResolveInstance`'s thinner message instead.
-Either wire it in or delete it — T3's existing test is a signal it is wanted.
+### [x] B22. The better "no instance" error is unreachable dead code
+Was: `requireInstanceArg` and `missingInstanceError` were written, documented
+and tested, but no command called them, so `Execute`'s
+`try: modharbor instances` hint could never fire. Fixed (T8) by adding
+`resolveInstance` as the single path every instance-taking command uses.
+Which instance a command resolves is unchanged; only the error surface moved.
 
 ### [x] B15. Coverage for `internal/provider/curseforge`
 Was 0%. Now 99.5% (T7, `74a2df3`): API key scoping, error mapping, malformed
@@ -224,18 +238,41 @@ A user sees `version vvvv has no downloadable file` with no indication which
 of thirty mods it refers to. `downloadInto` errors *are* wrapped with
 `f.Name()`; make these consistent.
 
-### [ ] B30. `(*Error).Error()` is context-free
+### [~] B30. `(*Error).Error()` is context-free
 `curseforge: 503 ` for a 5xx with an empty body; the project id appears only in
-the `URL` field. Include the URL in the message.
+the `URL` field. Folded into T9, which owns this file.
 
-### [ ] B17. `goreleaser check` in CI
-The release config has been validated as YAML but never against the
-goreleaser schema. Add a `goreleaser check` step, or pin the version and run
-`goreleaser release --snapshot --clean` on a tag.
+---
 
-### [ ] B18. `--verbose` currently does nothing
-The flag is parsed and never read. Either wire it to request logging or drop
-it from the global flags.
+## Known limitation, not yet scheduled
+
+`add --json` emits `"installed": [{}]` — `installedMod` has only unexported
+fields. Fixing it means adding JSON tags and deciding a schema, so it needs
+its own brief rather than riding along with another task.
+
+---
+
+## P2 — release pipeline
+
+### [x] B17. `goreleaser check` in CI
+Done (T6, `4bac9c2`). `check` passes on a `release-config` CI job and as a
+gate in the release workflow, and `version: latest` is now `~> v2`.
+
+`check` alone found nothing — the real bugs only surfaced from a snapshot
+build. It also found the first release would have **failed**: `release.yml`
+re-uploaded assets goreleaser had already attached, and GitHub rejects
+duplicate names. That step is removed. Snapshot matrix verified: 6 targets,
+10 artifacts, checksums good, docs in every archive, statically linked binary
+runs `version`. `docs/install.md` added. **Ready to tag `v0.1.0`**; no tag
+exists yet.
+
+### [x] B18. `--verbose` currently does nothing
+Wired, not removed (T4). On stderr it reports how each jar was resolved — file,
+method, project, title, confidence — plus the version and URL chosen per
+project and the digests verified after download. That answers "why did
+modharbor think that was X?", and the data already existed on `ScannedMod`.
+Unmatched jars are reported too, since that is what answers "why is this
+folder empty?"
 
 ---
 

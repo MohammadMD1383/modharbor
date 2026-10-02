@@ -99,7 +99,7 @@ packaged too, so the pack recreates a working game rather than just its mods.
 				defer os.RemoveAll(overridesDir)
 			}
 
-			res, err := mrpack.Export(cmd.Context(), args[0], inst.Path, inst.MCVersion, overridesDir)
+			res, err := mrpack.Export(cmd.Context(), a.MR(), args[0], inst.Path, inst.MCVersion, overridesDir)
 			if err != nil {
 				return fail("%v", err)
 			}

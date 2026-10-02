@@ -7,16 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/MohammadMD1383/modharbor/internal/config"
 	"github.com/MohammadMD1383/modharbor/internal/hashutil"
 	"github.com/MohammadMD1383/modharbor/internal/instance"
 	"github.com/MohammadMD1383/modharbor/internal/provider/modrinth"
 )
-
-// cacheTTL keeps one export from re-querying a project shared by several mods.
-const cacheTTL = 10 * time.Minute
 
 // ExportResult summarises a completed export so the CLI can report on it
 // without re-reading the archive it just wrote.
@@ -45,9 +40,11 @@ type ExportResult struct {
 // bytes. The pack therefore always round-trips, which is worth more than a
 // manifest that is smaller or purer.
 //
-// The Modrinth endpoint comes from the user's config so a mirror or a test
-// server is honoured without threading a client through the CLI.
-func Export(ctx context.Context, dir string, instancePath string, mcVersion string, overridesDir string) (ExportResult, error) {
+// The Modrinth client comes from the caller: the application has already
+// resolved it from config, the global flags and its own cache, and re-deriving
+// one here would discard all three — most visibly a configured mirror, which is
+// the only reason to point modharbor anywhere but Modrinth.
+func Export(ctx context.Context, mr *modrinth.Client, dir string, instancePath string, mcVersion string, overridesDir string) (ExportResult, error) {
 	inst, err := instance.Load(instancePath)
 	if err != nil {
 		// The caller has already resolved the instance; failing here would
@@ -56,11 +53,6 @@ func Export(ctx context.Context, dir string, instancePath string, mcVersion stri
 	}
 	if mcVersion == "" {
 		mcVersion = inst.MCVersion
-	}
-
-	mr, err := newClient()
-	if err != nil {
-		return ExportResult{}, err
 	}
 
 	mods, err := RequiredMods(ctx, mr, instancePath)
@@ -230,16 +222,6 @@ func sanitiseName(s string) string {
 		return "instance"
 	}
 	return out
-}
-
-// newClient builds the Modrinth client Export uses, honouring the user's
-// configured endpoint so a mirror or test server works without extra flags.
-func newClient() (*modrinth.Client, error) {
-	cfg, _, err := config.Load("")
-	if err != nil {
-		return nil, fmt.Errorf("reading config: %w", err)
-	}
-	return modrinth.New(modrinth.Options{BaseURL: cfg.Modrinth.BaseURL, CacheTTL: cacheTTL}), nil
 }
 
 // copyFile copies src to dst through a temporary file, so an interrupted

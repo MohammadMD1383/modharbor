@@ -62,23 +62,6 @@ func writeInstance(t *testing.T, dir, id string) string {
 	return abs
 }
 
-// pointConfigAt rewrites the resolved user config so mrpack's own client talks
-// to the test server. Export builds its client from config on purpose, so this
-// is the only seam available without changing its signature.
-func pointConfigAt(t *testing.T, baseURL string) {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	confDir := filepath.Join(dir, "modharbor")
-	if err := os.MkdirAll(confDir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", confDir, err)
-	}
-	body := fmt.Sprintf(`{"modrinth":{"enabled":true,"baseUrl":%q}}`, baseURL)
-	if err := os.WriteFile(filepath.Join(confDir, "config.json"), []byte(body), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-}
-
 func TestLoad(t *testing.T) {
 	// The manifest below is the exact shape Modrinth publishes: verified
 	// against a real .mrpack rather than written from memory.
@@ -370,8 +353,6 @@ func TestExportFallsBackToOverrides(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	pointConfigAt(t, srv.URL+"/v2")
-
 	instPath := writeInstance(t, t.TempDir(), "pack-test")
 	jarName := "my-private-mod.jar"
 	if err := os.WriteFile(filepath.Join(instPath, "mods", jarName), []byte(jarBody), 0o644); err != nil {
@@ -379,7 +360,8 @@ func TestExportFallsBackToOverrides(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "packs")
-	res, err := Export(context.Background(), out, instPath, "26.3", "")
+	res, err := Export(context.Background(), modrinth.New(modrinth.Options{BaseURL: srv.URL + "/v2"}),
+		out, instPath, "26.3", "")
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}

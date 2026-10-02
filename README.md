@@ -282,6 +282,7 @@ embedded under `overrides/` with its real digests — the pack always round-trip
 | `scan [instance]` | Identify every jar and record what it is. `--force` re-resolve, `--all` show unmatched rows inline |
 | `list [instance]` (`ls`) | List installed jars with their resolved identity. `--known` hides unmatched, `--force` re-resolve |
 | `outdated [instance]` (`check`) | Which mods have a newer build for *this* Minecraft version and loader |
+| `watch [instance]` | Poll for updates on a timer and print only when the set changes. `--every`, `--json` |
 | `update [instance]` (`up`) | Install available updates. Interactive by default; `--all`, `--dry-run`, `--yes`, `--include`, `--exclude`, `--allow-downgrade`, `--quiet-summary` |
 | `migrate <source> <target>` | Copy mods between instances, resolving versions for the target. `--dry-run`, `--copy-unknown`, `--allow-downgrade`, `--with-configs`, `--version-channel`, `--include`, `--exclude`, `--yes`, `--quiet-summary` |
 | `add <project...> [instance]` | Install from Modrinth by slug, project id or URL. `--channel`, `--no-deps`, `--dry-run`, `--yes` |

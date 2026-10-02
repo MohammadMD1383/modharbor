@@ -87,7 +87,8 @@ instance and all 129 are satisfied once nested jars are counted.
 
 ## Repository state
 
-- Branch `main` tracks `origin/main`. Three worktrees are in flight.
+- Branch `main` tracks `origin/main`. T3 and T4 worktrees are in flight;
+  T1 and T2 are merged and their worktrees removed.
 - Three commits on `main`: the initial implementation, then the backlog and
   task briefs.
 - `internal/cli` has one test file. `internal/cli` coverage was 0% when the
@@ -111,12 +112,12 @@ been merged**, because its brief assumes T1's fixes exist.
 
 These do not overlap, which is why they run in parallel:
 
-| Task | Branch | May touch |
-|---|---|---|
-| T1 — P0 CLI correctness | `fix/p0-cli-correctness` | `internal/cli/**`, `README.md` |
-| T2 — `watch` mode | `feat/watch` | new `internal/cli/watch.go`, one line of `root.go` |
-| T3 — CLI test harness | `test/cli-harness` | `internal/cli/**_test.go` (branches after T1) |
-| T4 — progress + `--verbose` | `feat/progress-and-verbose` | `internal/cli/{download,install,add,root}.go` |
+| Task | Branch | May touch | Status |
+|---|---|---|---|
+| T1 — P0 CLI correctness | `fix/p0-cli-correctness` | `internal/cli/**`, `README.md` | merged |
+| T2 — `watch` mode | `feat/watch` | new `internal/cli/watch.go`, one line of `root.go` | merged, verified live |
+| T3 — CLI test harness | `test/cli-harness` | `internal/cli/**_test.go` (branches after T1) | in flight |
+| T4 — progress + `--verbose` | `feat/progress-and-verbose` | `internal/cli/{download,install,add,root}.go` | in flight |
 
 T2 and T4 both add one line to `root.go`'s `AddCommand` list. Merge conflicts
 there are trivial and mechanical.

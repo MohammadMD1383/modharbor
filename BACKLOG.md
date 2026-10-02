@@ -67,15 +67,19 @@ Fix: accept a `*modrinth.Client` parameter, matching `Install`.
 
 ## P1 — features
 
-### [ ] B8. `watch` mode
+### [x] B8. `watch` mode
 Poll for new versions on an interval and print a notification when one
 appears. Useful for a long-lived modpack where you want to know about a
 release without remembering to run `outdated`.
 
-Design: `modharbor watch [instance] --every 30m`, respects
-`MODHARBOR_NONINTERACTIVE`, renders with the existing spinner and task
-styles, and stops cleanly on SIGINT. Bounded by the API's rate limit, so the
-interval must have a sensible minimum.
+Done (T2, `feat/watch`): `modharbor watch [instance] --every <duration>`,
+30m default, 60s minimum rejected rather than clamped. Prints the current
+state as a baseline, then the familiar `outdated` table only when the set of
+updates changes; unchanged cycles stay silent. `--json` emits one object per
+cycle with a `changed` flag (a silent stream is indistinguishable from a
+hang). Failed cycles warn and retry without touching the baseline; SIGINT and
+SIGTERM exit 0 with a farewell. The client cache TTL is tied to the poll
+interval so a release cannot hide behind a stale cache.
 
 ### [ ] B9. Cache the downloaded jars as content-addressed blobs
 Every update re-downloads a jar even when the identical file is already in

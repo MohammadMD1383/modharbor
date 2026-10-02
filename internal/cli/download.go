@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MohammadMD1383/modharbor/internal/provider/modrinth"
+	"github.com/MohammadMD1383/modharbor/internal/ui"
 )
 
 // fetchClient downloads mod files. Modrinth's CDN benefits from keep-alive
@@ -27,12 +28,82 @@ var fetchClient = &http.Client{
 	},
 }
 
+// transfer describes a download the caller wants shown to the user.
+//
+// It carries only what the caller knows before the request goes out;
+// fetchFile owns the rest of the lifecycle. A nil *transfer means "draw
+// nothing", which is the normal case under --json, --quiet and any
+// non-terminal stderr.
+type transfer struct {
+	// Label leads the bar. installProjects passes the mod name, because
+	// "downloading 40 MB" tells a user far less than which of thirty jars
+	// they are waiting for.
+	Label string
+	// Total is the expected size in bytes. fetchFile prefers the server's
+	// Content-Length when there is one, so treat this as a hint, not a
+	// contract.
+	Total int64
+}
+
+// progressEnabled reports whether a download bar may be drawn.
+//
+// Progress is written to stderr so it can never contaminate stdout, but it is
+// suppressed for --json anyway: a flag promising machine-readable output should
+// not also paint a bar, and a user who wants the bar can drop the flag. It is
+// suppressed for --quiet because that flag turns off decorative output.
+//
+// ui.Progress additionally disables itself when stderr is not a terminal, so
+// redirecting to a file yields neither the bar nor any escape sequences.
+func progressEnabled() bool { return !flagJSON && !flagQuiet }
+
+// newTransfer builds a transfer, or nil when no bar should be drawn.
+func newTransfer(label string, total int64) *transfer {
+	if !progressEnabled() {
+		return nil
+	}
+	return &transfer{Label: label, Total: total}
+}
+
+// countingReader advances a progress bar as the body streams in, so the bar
+// moves while bytes are arriving instead of snapping to 100% at the end.
+type countingReader struct {
+	src io.Reader
+	bar *ui.Progress
+}
+
+func (c countingReader) Read(p []byte) (int, error) {
+	n, err := c.src.Read(p)
+	if n > 0 && c.bar != nil {
+		c.bar.Add(int64(n))
+	}
+	return n, err
+}
+
+// transferTotal picks the byte count for the progress bar.
+//
+// Content-Length wins over the size the catalogue advertised, because it is
+// what the server is actually sending; a stale size would otherwise stop the
+// bar short of 100%.
+func transferTotal(tr *transfer, resp *http.Response) int64 {
+	if resp != nil && resp.ContentLength > 0 {
+		return resp.ContentLength
+	}
+	if tr != nil {
+		return tr.Total
+	}
+	return 0
+}
+
 // fetchFile downloads url into dest, verifying sha512 when provided.
 //
 // The download lands in a temporary file and is renamed into place only after
 // the digest matches, so a failed or truncated download never leaves a broken
 // jar where Minecraft would try to load it.
-func fetchFile(ctx context.Context, url, dest, wantSHA512 string) error {
+//
+// tr may be nil, in which case the transfer happens silently. When it is not,
+// the bar is cleared on every return path — including a checksum mismatch —
+// so a failed download cannot leave progress stuck on screen.
+func fetchFile(ctx context.Context, url, dest, wantSHA512 string, tr *transfer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -60,8 +131,20 @@ func fetchFile(ctx context.Context, url, dest, wantSHA512 string) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
+	// Start the bar only once the request has succeeded, so a connection
+	// failure never paints a bar it cannot finish.
+	var body io.Reader = resp.Body
+	if tr != nil {
+		bar := ui.NewProgress(tr.Label, transferTotal(tr, resp))
+		// Done("") erases the line and prints nothing, which is what is wanted
+		// on both success and failure. It also no-ops when stderr is not a
+		// terminal.
+		defer bar.Done("")
+		body = countingReader{src: resp.Body, bar: bar}
+	}
+
 	h := sha512.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
+	if _, err := io.Copy(io.MultiWriter(tmp, h), body); err != nil {
 		tmp.Close()
 		return err
 	}

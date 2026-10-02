@@ -11,7 +11,6 @@ import (
 	"github.com/MohammadMD1383/modharbor/internal/instance"
 	"github.com/MohammadMD1383/modharbor/internal/modmeta"
 	"github.com/MohammadMD1383/modharbor/internal/provider/modrinth"
-	"github.com/MohammadMD1383/modharbor/internal/ui"
 )
 
 // installProjects resolves projects and their dependencies, then downloads
@@ -58,8 +57,11 @@ func installProjects(ctx context.Context, a *app.App, inst *instance.Info, proje
 			return nil, nil, fmt.Errorf("resolving %s: %w", ref, err)
 		}
 
+		verbosef("resolved %q to %s (%s)", ref, proj.Title, proj.ID)
+
 		// Already installed?
 		if _, ok := existing[proj.ID]; ok {
+			verbosef("skipping %s: already installed", proj.Title)
 			skipped = append(skipped, proj.Title)
 			continue
 		}
@@ -77,6 +79,9 @@ func installProjects(ctx context.Context, a *app.App, inst *instance.Info, proje
 		if err != nil {
 			url = file.URL
 		}
+		verbosef("selected %s %s for MC %s / %s (%s from %s)",
+			proj.Title, ver.VersionNumber, inst.MCVersion, loader,
+			file.Filename, url)
 
 		mod := installedMod{
 			name:     proj.Title,
@@ -87,13 +92,17 @@ func installProjects(ctx context.Context, a *app.App, inst *instance.Info, proje
 			url:      url,
 			size:     file.Size,
 		}
-		if err := downloadInto(ctx, url, filepath.Join(modsDir, file.Filename), file.SHA512()); err != nil {
+		if err := downloadInto(ctx, url, filepath.Join(modsDir, file.Filename),
+			file.SHA512(), newTransfer(proj.Title, file.Size)); err != nil {
 			return nil, nil, fmt.Errorf("downloading %s: %w", proj.Title, err)
 		}
 		installed = append(installed, mod)
-		ui.Task("add", ui.Pad(truncateName(proj.Title, 30), 30),
-			ui.OK(ver.VersionNumber)+ui.Faint("  "+ui.HumanBytes(file.Size)))
+		verbosef("verified %s sha1=%s sha512=%s", file.Filename,
+			shortDigest(file.SHA1()), shortDigest(file.SHA512()))
 
+		// No ui.Task here on purpose: the caller renders the result list once,
+		// from the returned slices. Printing here too duplicated every line and
+		// put a stray row on stdout ahead of the JSON under --json.
 		if withDeps {
 			for _, dep := range ver.Dependencies {
 				switch strings.ToLower(dep.DependencyType) {
@@ -122,11 +131,31 @@ func installedIndex(ctx context.Context, a *app.App, inst *instance.Info) (map[s
 		return out, nil
 	}
 	for _, r := range rows {
+		// Emitted for every jar, not just the identified ones: "why did
+		// modharbor decide this folder was empty?" is answered by the row that
+		// came back unmatched.
+		verboseResolution(r)
 		if r.ProjectID != "" {
 			out[r.ProjectID] = r
 		}
 	}
 	return out, nil
+}
+
+// verboseResolution reports one jar's identification for --verbose.
+//
+// This is the diagnostic that answers "why did modharbor think that was X?".
+// Every field already exists on ScannedMod, so this costs nothing beyond the
+// flag: file name, the strategy that matched, the project, and the confidence
+// the strategy earned.
+func verboseResolution(r ScannedMod) {
+	project := r.ProjectID
+	if project == "" {
+		project = "none"
+	}
+	verbosef("%s  method=%s  project=%s  title=%s  confidence=%d%%",
+		r.FileName, orDash(r.Method), project, orDash(r.Title),
+		int(r.Confidence*100+0.5))
 }
 
 // resolveProject looks up a project by id or slug, falling back to search.
@@ -192,9 +221,24 @@ func bestCompatible(ctx context.Context, cli *modrinth.Client, projectID, mcVers
 
 // downloadInto fetches a file into the instance's mods directory, verifying
 // its checksum before the file becomes visible to the loader.
-func downloadInto(ctx context.Context, url, dest, sha512 string) error {
+//
+// tr may be nil, meaning the transfer is silent.
+func downloadInto(ctx context.Context, url, dest, sha512 string, tr *transfer) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	return fetchFile(ctx, url, dest, sha512)
+	return fetchFile(ctx, url, dest, sha512, tr)
+}
+
+// shortDigest abbreviates a digest for display. Verification errors carry the
+// full value; --verbose lines only need enough to compare against a
+// published hash by eye.
+func shortDigest(d string) string {
+	if len(d) > 12 {
+		return d[:12]
+	}
+	if d == "" {
+		return "none"
+	}
+	return d
 }

@@ -140,7 +140,7 @@ Start here:
 	pf.BoolVar(&flagNoColour, "no-color", false, "disable coloured output")
 	pf.BoolVar(&flagForceColour, "color", false, "force coloured output even when piped")
 	pf.BoolVarP(&flagQuiet, "quiet", "q", false, "suppress decorative output")
-	pf.BoolVarP(&flagVerbose, "verbose", "v", false, "enable verbose logging")
+	pf.BoolVarP(&flagVerbose, "verbose", "v", false, "report how each mod was resolved (stderr)")
 	pf.BoolVar(&flagOffline, "offline", false, "use cached data only; make no network requests")
 	pf.StringVar(&flagChannel, "channel", "", "release channel: release, beta or alpha")
 
@@ -198,6 +198,19 @@ func exitWithCode(code int, err error) error {
 // fail returns a formatted error. Execute renders it and exits non-zero.
 func fail(format string, a ...any) error {
 	return fmt.Errorf(format, a...)
+}
+
+// verbosef writes one diagnostic line to stderr when --verbose is set, and
+// nothing otherwise.
+//
+// Diagnostics go to stderr so that --json output stays parseable and a
+// redirected stdout carries only the result. The line is colour-aware and
+// respects NO_COLOR, because ui.Faint falls back to plain text.
+func verbosef(format string, a ...any) {
+	if !flagVerbose {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "  %s %s\n", ui.Faint(ui.SymDot), fmt.Sprintf(format, a...))
 }
 
 // printJSON writes a value as indented JSON to stdout.

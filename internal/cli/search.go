@@ -91,21 +91,23 @@ default when an instance is in scope, so results are installable as-is.
 			ui.Heading("Modrinth search", subtitle)
 			ui.Blank()
 
-			tab := ui.NewTable("", "PROJECT", "DESCRIPTION", "DL", "★")
-			tab.Align(0, ui.AlignRight)
+			// No slug column: rendering only its first letter was a leftover,
+			// and produced a column of meaningless single characters. The title
+			// identifies a project well enough, and `modharbor info` prints the
+			// slug when it is actually needed.
+			tab := ui.NewTable("PROJECT", "DESCRIPTION", "DL", "★")
+			tab.Align(2, ui.AlignRight)
 			tab.Align(3, ui.AlignRight)
-			tab.Align(4, ui.AlignRight)
 
 			for _, h := range res.Hits {
 				tab.Row(
-					ui.Faint(h.Slug[:min(1, len(h.Slug))]),
 					ui.Pad(h.Title, 22),
 					ui.Muted(ui.Truncate(h.Description, 52)),
 					compactCount(h.Downloads),
 					compactCount(h.Follows),
 				)
 			}
-			tab.Footer("", fmt.Sprint(res.TotalHits), "results", "", "")
+			tab.Footer(fmt.Sprint(res.TotalHits), "results", "", "")
 			tab.Render()
 			ui.Hint("install with `modharbor add <slug>`")
 			ui.Blank()

@@ -68,12 +68,18 @@ everything, or --dry-run to see the list first.
 				AllowDowngrade: allowDowngrade,
 				Include:        include,
 				Exclude:        exclude,
-				DryRun:         dryRun,
-				OnProgress:     migrateProgress(dryRun),
 			}
 
-			// Compute the plan first; this never writes to the mods directory.
-			plan, err := eng.Run(cmd.Context(), inst, inst, opts)
+			// Planning must not write. Engine.Run materialises as it decides
+			// unless DryRun is set, so a planning pass that applied its own
+			// results would leave the apply pass re-deciding against a folder
+			// it had just rewritten: every mod would come back as already
+			// current and the command would report an empty run.
+			planOpts := opts
+			planOpts.DryRun = true
+			planOpts.OnProgress = migrateProgress(true)
+
+			plan, err := eng.Run(cmd.Context(), inst, inst, planOpts)
 			if err != nil {
 				return fail("%v", err)
 			}
@@ -106,6 +112,7 @@ everything, or --dry-run to see the list first.
 			})
 
 			if dryRun {
+				ui.Note("dry run: mods/ is unchanged")
 				ui.Hint("re-run without --dry-run to apply")
 				ui.Blank()
 				return nil
@@ -115,7 +122,8 @@ everything, or --dry-run to see the list first.
 			if !yes && !all && ui.IsInteractive() && !flagQuiet {
 				names := make([]string, 0, updatable)
 				for _, r := range plan.Results {
-					if r.Action == migrate.ActionInstall || r.Action == migrate.ActionReplace {
+					if r.Action == migrate.ActionInstall || r.Action == migrate.ActionReplace ||
+						r.Action == migrate.ActionReinstall {
 						names = append(names, fmt.Sprintf("%s  %s %s",
 							ui.Pad(truncateName(r.Title, 28), 30),
 							ui.Muted(orDash(r.SourceVersion)),
@@ -131,24 +139,36 @@ everything, or --dry-run to see the list first.
 				if len(chosen) == 0 {
 					ui.Blank()
 					ui.Info("nothing selected")
+					ui.Blank()
 					return nil
 				}
 				opts.Include = selectedTitles(plan.Results, chosen)
 				opts.Exclude = nil
-				// Re-plan with the narrowed selection.
-				plan, err = eng.Run(cmd.Context(), inst, inst, opts)
+				// Re-plan with the narrowed selection. This stays dry for the
+				// same reason the first plan did; the selection changes what
+				// would happen, not whether anything has happened yet.
+				planOpts = opts
+				planOpts.DryRun = true
+				planOpts.OnProgress = migrateProgress(true)
+				plan, err = eng.Run(cmd.Context(), inst, inst, planOpts)
 				if err != nil {
 					return fail("%v", err)
 				}
 			}
 
-			rep, err := eng.Run(cmd.Context(), inst, inst, opts)
+			// One write pass, carrying whatever the planning above settled on.
+			// The summary is built from this report because it is the only one
+			// describing a filesystem that actually changed.
+			applyOpts := opts
+			applyOpts.OnProgress = migrateProgress(false)
+			rep, err := eng.Run(cmd.Context(), inst, inst, applyOpts)
 			if err != nil {
 				return fail("%v", err)
 			}
 			if quietSummary {
 				ui.Blank()
 				ui.Success("updated %d mod(s)", rep.Installed+rep.Replaced+rep.Reinstalled)
+				ui.Blank()
 				return nil
 			}
 			renderUpdateResult(inst, rep)

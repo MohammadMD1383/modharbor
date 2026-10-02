@@ -148,6 +148,22 @@ t.Setenv("XDG_DATA_HOME", t.TempDir())
 Use `httptest.NewServer` for the API, never the live one. `internal/ui` writes
 to `os.Stdout`; capture it with `ui.SetWriters(buf, buf)` where output matters.
 
+### Never `cd` into a real instance directory
+
+On 2026-10-02 two stray jars (`fabric-api-0.161.0%2B26.3.jar`,
+`sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar`) appeared in the real
+`26.3-fabric-mod/mods` — duplicate Sodium and duplicate Fabric API, which
+would crash the game on launch. The `%2B` URL-encoding proves they were saved
+from a CDN URL basename (`curl -O` style), not by modharbor, which always uses
+the API-provided filename. Most likely an agent fetched fixture jars while its
+working directory was the real `mods/` folder. They were deleted; the
+instance is back to 23 jars and `doctor` is clean.
+
+Rules so this cannot recur: never set your working directory inside
+`~/.minecraft`; fetch fixture jars only with an explicit output path
+(`curl -o "$SCRATCH/..."`, never `curl -O`); after any hand-testing, confirm
+`26.2-fabric-mod/mods` still has 33 jars and `26.3-fabric-mod/mods` has 23.
+
 ### UI helper contract
 
 `ui.Success`, `ui.Warn`, `ui.Info`, `ui.Note` and `ui.Failure` **both print a

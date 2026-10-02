@@ -7,7 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **`.goreleaser.yaml` is now validated on every PR.** A new
+  `release-config` job in `ci.yml` runs `goreleaser check`, which validates the
+  release config against goreleaser's own schema without building anything.
+  Nothing else in CI ever read that file, so a typo in it previously sat
+  unnoticed until somebody tagged and the release workflow failed.
+- **`goreleaser check` also runs on the release gate itself**, so a bad config
+  fails in the `build` job of `release.yml` instead of after the `release` job
+  has already started creating a GitHub release.
+- **`docs/install.md`**, documenting the real artifact matrix — which file name
+  to download for each platform, what the `.deb`/`.rpm` install, how to verify
+  `checksums.txt`, and which install paths modharbor does *not* provide.
+
+### Changed
+
+- **goreleaser is pinned to the `~> v2` line in both workflows**, replacing
+  `version: latest`. A release should be built by a known goreleaser, not by
+  whatever happens to be newest on the day the tag is pushed.
+- **The `.deb`/`.rpm` packages now ship their documentation.**
+  `LICENSE`, `README.md` and `CHANGELOG.md` are installed under
+  `/usr/share/doc/modharbor/`, and the packages declare `license: MIT`. The
+  comment claiming this was waiting on a README and a LICENSE was stale: both
+  have been tracked in git for a while.
+- **Archive file globs are exact filenames instead of `LICENSE*`-style
+  patterns.** A wildcard silently tolerates a missing file, which is how an
+  archive ends up shipping without its `LICENSE`; nfpm's `contents` are exact
+  for the same reason, since nfpm hard-fails on a glob that matches nothing.
+
+### Fixed
+
+- **`release.yml` no longer re-uploads the release assets.** goreleaser already
+  creates the GitHub release *and* uploads every one of its artifacts to it —
+  the six archives, the four linux packages and `checksums.txt`. The extra
+  `softprops/action-gh-release` step pointed at those same paths, so it could
+  only ever re-upload files that already existed on the release, which GitHub
+  rejects. The first tagged release would have ended with a published release
+  and a red workflow run.
+
+### Known issues
+
+- `README.md`'s install section says the prebuilt binaries are attached as
+  `tar.gz`. Windows artifacts are `.zip` (every other platform is `.tar.gz`).
+  `docs/install.md` is correct; the README line still needs the same
+  correction.
 
 ## [0.1.0] - 2026-10-02
 

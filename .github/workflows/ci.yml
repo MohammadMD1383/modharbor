@@ -111,7 +111,12 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pinned, not `latest`. `--default` only exists in golangci-lint v2;
+          # with `version: latest` the action resolved a v1.64.8 binary, which
+          # rejected the flag outright and failed every run with
+          # "unknown flag: --default". A linter that cannot start is worse than
+          # no linter, because it reads as the code being at fault.
+          version: v2.14.0
           args: >-
             --timeout=5m
             --default=none

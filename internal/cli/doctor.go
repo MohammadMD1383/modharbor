@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +31,26 @@ type finding struct {
 	title    string
 	detail   string
 	fix      string
+}
+
+// findingJSON is the wire shape of a finding. It is a separate type because
+// encoding/json skips unexported fields silently: with the tags on finding
+// itself, `doctor --json` emitted `{}` for every finding and left automation
+// with nothing but the counts.
+type findingJSON struct {
+	Severity string `json:"severity"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	Fix      string `json:"fix,omitempty"`
+}
+
+func (f finding) MarshalJSON() ([]byte, error) {
+	return json.Marshal(findingJSON{
+		Severity: f.severity,
+		Title:    f.title,
+		Detail:   f.detail,
+		Fix:      f.fix,
+	})
 }
 
 // doctorReport is the machine-readable form of a doctor run.
@@ -72,9 +93,9 @@ directory rather than deleting them outright.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			rows, err := scanInstance(cmd.Context(), a, inst, false)
@@ -112,10 +133,18 @@ directory rather than deleting them outright.
 				}
 			}
 
+			// The exit status is derived from the findings, not from the
+			// formatting flag: a script that asks for JSON and gets status 0
+			// on an instance with error findings is reading a different
+			// verdict from the same run. Encoding first keeps the payload whole
+			// before a non-zero exit truncates the process.
 			if flagJSON {
-				return printJSON(rep)
+				if err := printJSON(rep); err != nil {
+					return fail("%v", err)
+				}
+			} else {
+				renderDoctor(inst, findings)
 			}
-			renderDoctor(inst, findings)
 			if rep.Errors > 0 {
 				return exitWithCode(1, nil)
 			}

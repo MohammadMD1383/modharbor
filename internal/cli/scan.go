@@ -72,9 +72,9 @@ Results are cached, so later commands are fast. Use --force to re-resolve.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			rows, err := scanInstance(cmd.Context(), a, inst, force)

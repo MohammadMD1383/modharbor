@@ -97,9 +97,9 @@ in the new snapshot rather than deleted.
 			if err != nil {
 				return fail("%v", err)
 			}
-			inst, err := a.ResolveInstance(pickInstanceArg(args))
+			inst, err := resolveInstance(a, args)
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 			modsDir := inst.ModsDirOrDefault()
 			backupRoot := filepath.Join(modsDir, backupDirName)

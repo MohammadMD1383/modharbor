@@ -51,9 +51,9 @@ identification, and they survive cache expiry.
 			} else {
 				instRef, modRef, projectRef = flagInstance, args[0], args[1]
 			}
-			inst, err := a.ResolveInstance(instRef)
+			inst, err := resolveInstance(a, []string{instRef})
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			jar, sha1, err := findJar(inst, modRef)
@@ -123,9 +123,9 @@ func newUnlinkCmd() *cobra.Command {
 			if len(args) == 2 {
 				instRef, modRef = args[0], args[1]
 			}
-			inst, err := a.ResolveInstance(instRef)
+			inst, err := resolveInstance(a, []string{instRef})
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 			_, sha1, err := findJar(inst, modRef)
 			if err != nil {

@@ -56,9 +56,9 @@ considered.
 			if len(projects) == 0 {
 				return fail("no project given")
 			}
-			inst, err := a.ResolveInstance(instRef)
+			inst, err := resolveInstance(a, []string{instRef})
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			verbosef("instance %s  mods=%s  loader=%s  channel=%s",
@@ -212,9 +212,9 @@ to the same jar. Use --dry-run to confirm what would go before it goes.
 				return fail("%v", err)
 			}
 			instRef, wanted := splitArgs(args)
-			inst, err := a.ResolveInstance(instRef)
+			inst, err := resolveInstance(a, []string{instRef})
 			if err != nil {
-				return fail("%v", err)
+				return err
 			}
 
 			files, err := instance.ModFiles(inst.ModsDirOrDefault())
@@ -395,9 +395,16 @@ func projectKey(s string) string {
 	s = strings.TrimPrefix(s, "https://modrinth.com/mod/")
 	s = strings.TrimPrefix(s, "http://modrinth.com/mod/")
 	s = strings.TrimPrefix(s, "https://modrinth.com/project/")
-	s = strings.TrimSuffix(s, "/")
+	// The fourth of the four forms modrinth.com serves over both schemes was
+	// missing, so an http project link was looked up as a whole URL and
+	// reported as a project that does not exist.
+	s = strings.TrimPrefix(s, "http://modrinth.com/project/")
+	// The query string goes before the trailing slash, never after: a query
+	// ends the string, so trimming the slash first leaves it glued to the
+	// query and "…/lithium/?tab=versions" resolves to the non-existent project
+	// "lithium/". A URL pasted out of a browser has both.
 	if i := strings.Index(s, "?"); i > 0 {
 		s = s[:i]
 	}
-	return s
+	return strings.TrimSuffix(s, "/")
 }

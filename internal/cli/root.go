@@ -152,6 +152,7 @@ Start here:
 		newScanCmd(),
 		newListCmd(),
 		newOutdatedCmd(),
+		newWatchCmd(),
 		newUpdateCmd(),
 		newMigrateCmd(),
 		newAddCmd(),

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/MohammadMD1383/modharbor/internal/hashutil"
 	"github.com/MohammadMD1383/modharbor/internal/ui"
@@ -27,43 +30,118 @@ import (
 
 // captureCLI runs the CLI with args and returns everything it printed.
 //
-// Both streams are captured because the CLI writes through two different
-// paths: internal/ui holds its own writer, while printJSON writes to os.Stdout
-// directly. Everything is restored afterwards so tests stay independent.
+// Both streams are returned because the CLI writes through two different
+// paths: internal/ui holds its own writers, while printJSON writes to
+// os.Stdout directly. They are concatenated rather than kept apart, which is
+// what a test asserting on "the output" wants. Use executeCLI when the two
+// streams have to be told apart. Everything is restored afterwards so tests
+// stay independent.
 func captureCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
+	var runErr error
+	stdout, stderr := captureStreams(t, func() {
+		root := newRootCmd()
+		root.SetArgs(args)
+		runErr = root.Execute()
+	})
+	return stdout + stderr, runErr
+}
+
+// executeCLI runs the real process entry point and reports its exit code along
+// with each stream kept separate.
+//
+// It exists because the two entry points are not interchangeable. A command
+// returns an error to cobra and writes nothing; it is Execute that turns that
+// error into an exit code *and* a message on stderr. Testing root.Execute()
+// therefore skips exactly the code that once swallowed every message (B1):
+// the tool exited non-zero while both streams stayed empty. Only calling
+// Execute() itself can catch that coming back.
+func executeCLI(t *testing.T, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+
+	origArgs := os.Args
+	// cobra reads os.Args[1:] when no SetArgs call happened, so this is how the
+	// binary's argv reaches it. Naming the program "modharbor" keeps cobra's
+	// own "cobra.test" workaround from swallowing the arguments.
+	os.Args = append([]string{"modharbor"}, args...)
+	t.Cleanup(func() { os.Args = origArgs })
+
+	stdout, stderr = captureStreams(t, func() { code = Execute() })
+	return code, stdout, stderr
+}
+
+// captureStreams points os.Stdout, os.Stderr and the internal/ui writers at
+// pipes, runs fn, and returns what each stream received.
+func captureStreams(t *testing.T, fn func()) (stdout, stderr string) {
+	t.Helper()
+
+	origOut, origErr := os.Stdout, os.Stderr
+	outR, outW := newPipe(t)
+	errR, errW := newPipe(t)
+	os.Stdout, os.Stderr = outW, errW
+	// Colour is off so assertions can match plain text; ANSI escapes would
+	// otherwise sit between a word and the space that follows it.
+	ui.SetWriters(outW, errW)
+	ui.SetColorEnabled(false)
+	t.Cleanup(func() {
+		os.Stdout, os.Stderr = origOut, origErr
+		ui.SetWriters(origOut, origErr)
+		ui.SetColorEnabled(false)
+	})
+
+	// Each pipe is drained by its own goroutine while fn runs. Reading only
+	// afterwards would deadlock on any output larger than the pipe buffer,
+	// turning a printing test into a hung suite.
+	var wg sync.WaitGroup
+	var outBody, errBody []byte
+	var outErr, readErr error
+	for _, p := range []struct {
+		r    *os.File
+		w    *os.File
+		body *[]byte
+		fail *error
+	}{
+		{r: outR, w: outW, body: &outBody, fail: &outErr},
+		{r: errR, w: errW, body: &errBody, fail: &readErr},
+	} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			b, err := io.ReadAll(p.r)
+			*p.body, *p.fail = b, err
+		}()
+	}
+
+	fn()
+
+	for _, w := range []*os.File{outW, errW} {
+		if err := w.Close(); err != nil {
+			t.Fatalf("close pipe: %v", err)
+		}
+	}
+	wg.Wait()
+	for _, r := range []*os.File{outR, errR} {
+		if err := r.Close(); err != nil {
+			t.Fatalf("close reader: %v", err)
+		}
+	}
+	if outErr != nil {
+		t.Fatalf("read stdout: %v", outErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read stderr: %v", readErr)
+	}
+	return string(outBody), string(errBody)
+}
+
+func newPipe(t *testing.T) (r, w *os.File) {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	origOut := os.Stdout
-	os.Stdout = w
-	// Colour is off so assertions can match plain text; ANSI escapes would
-	// otherwise sit between a word and the space that follows it.
-	ui.SetWriters(w, w)
-	ui.SetColorEnabled(false)
-	t.Cleanup(func() {
-		os.Stdout = origOut
-		ui.SetWriters(origOut, os.Stderr)
-		ui.SetColorEnabled(false)
-	})
-
-	root := newRootCmd()
-	root.SetArgs(args)
-	runErr := root.Execute()
-
-	if err := w.Close(); err != nil {
-		t.Fatalf("close pipe: %v", err)
-	}
-	body, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read pipe: %v", err)
-	}
-	if err := r.Close(); err != nil {
-		t.Fatalf("close reader: %v", err)
-	}
-	return string(body), runErr
+	return r, w
 }
 
 // ─── the fake Modrinth ───────────────────────────────────────────────────────
@@ -72,6 +150,11 @@ func captureCLI(t *testing.T, args ...string) (string, error) {
 // a mods directory and offering 0.11.0 upstream is the smallest setup that
 // exercises a real upgrade: the engine resolves the jar by hash, picks the
 // newer build, and replaces the file.
+//
+// A third fixture, sodiumMirrorJar, is known to Modrinth by hash but is absent
+// from the project's version listing. It stands in for a jar republished
+// elsewhere: the same version number with different bytes, which the engine
+// must label a reinstall rather than an upgrade.
 const (
 	sodiumProjectID = "AANobbMI"
 	sodiumSlug      = "sodium"
@@ -88,6 +171,26 @@ const (
 	sodiumOldDate = "2026-01-01T00:00:00Z"
 	sodiumNewDate = "2026-02-01T00:00:00Z"
 	sodiumGameVsn = "26.3"
+
+	sodiumMirrorJar  = "sodium 0.11.0 (repacked)\n"
+	sodiumMirrorFile = "sodium-0.11.0-mirror.jar"
+	sodiumMirrorID   = "verMirror00000000"
+	sodiumMirrorNo   = sodiumNewNo
+	sodiumMirrorDate = "2025-12-01T00:00:00Z"
+	sodiumModID      = "sodium"
+	sodiumModName    = "Sodium"
+)
+
+// A second project that exists but publishes nothing compatible. It is the
+// cheapest way to reach the "skip" decision: the local jar resolves cleanly by
+// hash, then the version query comes back empty, so the engine has to explain
+// why rather than silently treating the mod as current.
+const (
+	lithiumProjectID = "gvQqBUqZ"
+	lithiumSlug      = "lithium"
+	lithiumTitle     = "Lithium"
+	lithiumJar       = "lithium 0.2.0\n"
+	lithiumFile      = "lithium-0.2.0.jar"
 )
 
 // fakeModrinth serves the endpoints these tests touch and records what was
@@ -148,16 +251,32 @@ func (f *fakeModrinth) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
-	// Hash lookups: only the two fixture jars are "published".
+	// Hash lookups: every fixture jar is "published", so each resolves to a
+	// project without any fuzzy matching.
 	case r.URL.Path == "/v2/version_file/"+hashutil.SHA1Bytes([]byte(sodiumOldJar)):
-		writeJSON(w, versionJSON(sodiumOldID, sodiumOldNo, sodiumOldFile, sodiumOldJar, sodiumOldDate))
+		writeJSON(w, versionJSON(sodiumProjectID, sodiumOldID, sodiumOldNo,
+			sodiumOldFile, sodiumOldJar, sodiumOldDate, sodiumGameVsn))
 	case r.URL.Path == "/v2/version_file/"+hashutil.SHA1Bytes([]byte(sodiumNewJar)):
-		writeJSON(w, versionJSON(sodiumNewID, sodiumNewNo, sodiumNewFile, sodiumNewJar, sodiumNewDate))
+		writeJSON(w, versionJSON(sodiumProjectID, sodiumNewID, sodiumNewNo,
+			sodiumNewFile, sodiumNewJar, sodiumNewDate, sodiumGameVsn))
+
+	// The mirror is known by hash but deliberately missing from the listing
+	// below. A jar on disk that resolves to the same version number as the
+	// newest build, with different bytes, is the reinstall case.
+	case r.URL.Path == "/v2/version_file/"+hashutil.SHA1Bytes([]byte(sodiumMirrorJar)):
+		writeJSON(w, versionJSON(sodiumProjectID, sodiumMirrorID, sodiumMirrorNo,
+			sodiumMirrorFile, sodiumMirrorJar, sodiumMirrorDate, sodiumGameVsn))
+
+	case r.URL.Path == "/v2/version_file/"+hashutil.SHA1Bytes([]byte(lithiumJar)):
+		writeJSON(w, versionJSON(lithiumProjectID, "verLithium0000000", "mc26.3-0.2.0-fabric",
+			lithiumFile, lithiumJar, "2026-01-15T00:00:00Z", sodiumGameVsn))
 
 	// The newer file's mirror URL, which the CDN lookup resolves into a
 	// direct download URL.
 	case r.URL.Path == "/v2/data/"+hashutil.SHA1Bytes([]byte(sodiumNewJar)):
 		writeJSON(w, map[string]any{"url": f.URL + "/files/" + sodiumNewFile})
+	case r.URL.Path == "/v2/data/"+hashutil.SHA1Bytes([]byte(sodiumMirrorJar)):
+		writeJSON(w, map[string]any{"url": f.URL + "/files/" + sodiumMirrorFile})
 
 	case r.URL.Path == "/v2/project/"+sodiumSlug, r.URL.Path == "/v2/project/"+sodiumProjectID:
 		writeJSON(w, map[string]any{
@@ -170,12 +289,30 @@ func (f *fakeModrinth) serve(w http.ResponseWriter, r *http.Request) {
 
 	// The version listing. Served oldest-first on purpose: the client is
 	// responsible for ordering, and a fixture that only works when the
-	// server happens to agree would hide a regression there.
+	// server happens to agree would hide a regression there. The mirror is
+	// left out on purpose, as explained above.
 	case r.URL.Path == "/v2/project/"+sodiumProjectID+"/version":
 		writeJSON(w, []any{
-			versionJSON(sodiumOldID, sodiumOldNo, sodiumOldFile, sodiumOldJar, sodiumOldDate),
-			versionJSON(sodiumNewID, sodiumNewNo, sodiumNewFile, sodiumNewJar, sodiumNewDate),
+			versionJSON(sodiumProjectID, sodiumOldID, sodiumOldNo,
+				sodiumOldFile, sodiumOldJar, sodiumOldDate, sodiumGameVsn),
+			versionJSON(sodiumProjectID, sodiumNewID, sodiumNewNo,
+				sodiumNewFile, sodiumNewJar, sodiumNewDate, sodiumGameVsn),
 		})
+
+	case r.URL.Path == "/v2/project/"+lithiumSlug, r.URL.Path == "/v2/project/"+lithiumProjectID:
+		writeJSON(w, map[string]any{
+			"id": lithiumProjectID, "slug": lithiumSlug, "title": lithiumTitle,
+			"description": "Optimises physics and tick behaviour",
+			"categories":  []string{"optimization"},
+			"loaders":     []string{"fabric"},
+			"client_side": "required", "server_side": "required",
+		})
+
+	// The project exists but has published nothing. bestVersion has to fall
+	// through to explainEmpty, which is what distinguishes a skip from a
+	// silent "already up to date".
+	case r.URL.Path == "/v2/project/"+lithiumProjectID+"/version":
+		writeJSON(w, []any{})
 
 	// No fuzzy hits by default: a name match would let the resolver attach
 	// these jars to an unrelated project, which is exactly the failure this
@@ -201,16 +338,20 @@ func (f *fakeModrinth) jar(path string) ([]byte, bool) {
 		return []byte(sodiumOldJar), true
 	case "/files/" + sodiumNewFile:
 		return []byte(sodiumNewJar), true
+	case "/files/" + sodiumMirrorFile:
+		return []byte(sodiumMirrorJar), true
 	default:
 		return nil, false
 	}
 }
 
-// versionJSON builds one Modrinth version payload.
-func versionJSON(id, number, filename, body, published string) map[string]any {
+// versionJSON builds one Modrinth version payload. projectID and gameVersion
+// are explicit because the fixtures span two projects; a hard-coded one made
+// every added project a chance to attach itself to sodium instead.
+func versionJSON(projectID, id, number, filename, body, published, gameVersion string) map[string]any {
 	return map[string]any{
-		"id": id, "project_id": sodiumProjectID, "name": number, "version_number": number,
-		"version_type": "release", "game_versions": []string{sodiumGameVsn},
+		"id": id, "project_id": projectID, "name": number, "version_number": number,
+		"version_type": "release", "game_versions": []string{gameVersion},
 		"loaders": []string{"fabric"}, "date_published": published,
 		"files": []any{map[string]any{
 			"hashes": map[string]string{
@@ -254,6 +395,59 @@ func newTestInstance(t *testing.T, id string, jars map[string][]byte) (mcDir, in
 		}
 	}
 	return mcDir, instPath
+}
+
+// fabricJar builds a real jar containing a fabric.mod.json descriptor.
+//
+// A plain []byte fixture will not do. Everything that identifies a mod without
+// a Modrinth hit — the duplicate check in doctor, the mod-id column in list,
+// the dependency check — works by opening the archive and reading the
+// descriptor, so a fixture that is not a zip would silently exercise none of it
+// and those checks would look "covered" while never running.
+func fabricJar(t *testing.T, modID, name, version, dependsOn string) []byte {
+	t.Helper()
+
+	if dependsOn == "" {
+		dependsOn = "{}"
+	}
+	descriptor := fmt.Sprintf(
+		`{"schemaVersion":1,"id":%q,"version":%q,"name":%q,"depends":%s}`,
+		modID, version, name, dependsOn)
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("fabric.mod.json")
+	if err != nil {
+		t.Fatalf("create fabric.mod.json: %v", err)
+	}
+	if _, err := io.WriteString(w, descriptor); err != nil {
+		t.Fatalf("write fabric.mod.json: %v", err)
+	}
+	// One real class file so the archive is not suspiciously small.
+	w, err = zw.Create("net/example/Dummy.class")
+	if err != nil {
+		t.Fatalf("create class entry: %v", err)
+	}
+	if _, err := io.WriteString(w, "// fixture\n"); err != nil {
+		t.Fatalf("write class entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close jar: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// modsDirOf is the mods directory of an instance built by newTestInstance.
+func modsDirOf(instPath string) string { return filepath.Join(instPath, "mods") }
+
+// setModTime pins a file's timestamp. doctor decides which of a set of
+// duplicate jars to keep by comparing modification times, so a test that leaves
+// them all equal is asserting on an arbitrary winner.
+func setModTime(t *testing.T, path string, when time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
+	}
 }
 
 // writeTestConfig redirects config, state and cache away from the developer's
@@ -341,6 +535,17 @@ func assertDirUnchanged(t *testing.T, want, got map[string]string) {
 	sort.Strings(changed)
 	t.Errorf("directory changed:\n  added:    %v\n  removed:  %v\n  modified: %v",
 		added, removed, changed)
+}
+
+// decodeJSON parses the stdout of a --json command into v.
+//
+// The failure message quotes the payload so a malformed document is diagnosable
+// from the test output alone.
+func decodeJSON(t *testing.T, out string, v any) {
+	t.Helper()
+	if err := json.Unmarshal([]byte(out), v); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n--- output ---\n%s---", err, out)
+	}
 }
 
 // mustContain fails unless out contains every fragment.

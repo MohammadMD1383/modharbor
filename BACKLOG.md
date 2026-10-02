@@ -17,41 +17,44 @@ bytes on stdout and stderr, which makes the tool unusable in CI.
 Fixed: `fail()` returns a plain error; only a `silentError` with a nil inner
 error is silent.
 
-### [ ] B2. `add --dry-run` downloads and installs anyway
-`add` declares a `--dry-run` flag but never passes it down, so the flag is
-purely decorative: the jar lands in `mods/` and the command then prints
-"this was a dry run". This contradicts the promise in the README.
+### [x] B2. `add --dry-run` downloads and installs anyway
+`add` declared a `--dry-run` flag but never passed it down, so the flag was
+purely decorative: the jar landed in `mods/` and the command then printed
+"this was a dry run". This contradicted the promise in the README.
 
-Fix: thread `dryRun` into `installProjects`; resolve and report the plan
-without downloading. Regression test asserting `mods/` is untouched.
+Fixed (T1, `b0489c2`): the flag reaches `installProjects` and gates only the
+download and the write — resolution still needs the API, so a dry run still
+talks to Modrinth. The summary says "would install" rather than "installed".
 
-### [ ] B3. `add` and `remove` ignore the global `-i/--instance`
-`splitArgs()` returns an empty instance reference and never falls back to
-`flagInstance`, so `-i` is silently dropped. Every other command uses
-`pickInstanceArg` and works.
+### [x] B3. `add` and `remove` ignore the global `-i/--instance`
+`splitArgs()` returned an empty instance reference and never fell back to
+`flagInstance`, so `-i` was silently dropped. Every other command uses
+`pickInstanceArg` and worked.
 
-Fix: fall back to `flagInstance`, then the config default.
+Fixed (T1): `splitArgs` falls back to `flagInstance`, and the config default
+still applies when neither is set. Positional form unchanged.
 
-### [ ] B4. `update --all` runs the engine twice against a live filesystem
-`update` calls `eng.Run` to compute the plan, then calls it again to apply.
-The first call already applied the changes, so the second finds nothing and
-reports "nothing changed" after updating four mods. Cosmetic today, but it
-means the reported summary is always the empty run, and it doubles the work.
+### [x] B4. `update --all` runs the engine twice against a live filesystem
+`update` called `eng.Run` to compute the plan, then again to apply. The first
+call already applied the changes, so the second found nothing and reported
+"nothing changed" after updating four mods.
 
-Fix: compute the plan with `DryRun: true`, then apply only the selected mods
-in a single second pass.
+Fixed (T1): planning is `DryRun` throughout, including the interactive
+re-plan after selection, with a single apply pass whose report drives the
+summary.
 
-### [ ] B5. `list --all` is documented but does not exist
-The README's example block shows `modharbor list --all`; the flag is actually
-`--known` (inverted sense). Either add `--all` or correct the docs.
+### [x] B5. `list --all` documented but nonexistent — was a false report
+The docs pass claimed the README showed `modharbor list --all`. It does not;
+the command table documents `--known` and no example uses `--all`. Nothing to
+fix, and `TestReadmeDoesNotDocumentListAll` now guards against it appearing.
+Kept as an item because the report was wrong, not the code.
 
-Fix: correct the README example, since `--known` is the more useful default
-for a listing command.
+### [x] B6. `search` prints only the first letter of each slug
+The first column rendered `h.Slug[:min(1, len(h.Slug))]`, so every row showed
+a single character.
 
-### [ ] B6. `search` prints only the first letter of each slug
-The first column renders `h.Slug[:min(1, len(h.Slug))]`, so every row shows a
-single character. Almost certainly a leftover. Either drop the column or
-render the slug in full.
+Fixed (T1): column removed. The title identifies the project and
+`modharbor info` prints the slug when it is needed.
 
 ### [ ] B7. `export` constructs its own Modrinth client
 `internal/mrpack/export.go` calls `config.Load("")` directly instead of
@@ -106,12 +109,12 @@ works against a modded folder with no version JSON.
 
 ## P2 — polish
 
-### [ ] B14. Test coverage for `internal/cli`
-The command layer has no tests, which is how B2 through B5 went unnoticed.
-`internal/cli` currently reports 0% coverage. The pure helpers
-(`splitArgs`, `pickInstanceArg`, `matchMods`, `loaderName`, `projectKey`,
-`orDash`, `truncateName`) are testable without a terminal; the commands
-themselves want `httptest` plus a temp instance directory.
+### [~] B14. Test coverage for `internal/cli`
+The command layer had no tests, which is how B2 through B6 went unnoticed.
+`internal/cli` reported 0% coverage.
+
+Started (T1, `b0489c2`): a harness plus regression tests for each fix took it
+to 24.9%. In progress (T3) to cover the pure helpers and the error paths.
 
 ### [ ] B15. Coverage for `internal/provider/curseforge`
 Currently 0%. The client is untested even though it is reachable via

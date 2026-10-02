@@ -205,7 +205,9 @@ func (p *Progress) renderLocked() {
 	pct := fmt.Sprintf("%3.0f%%", frac*100)
 	speed := ""
 	if el := time.Since(p.started).Seconds(); el > 0.15 {
-		speed = fmt.Sprintf(" %s/s", HumanRate(float64(p.current)/el))
+		// HumanRate already appends the /s suffix, so wrapping it again would
+		// render the rate as "1.0 MB/s/s".
+		speed = " " + HumanRate(float64(p.current)/el)
 	}
 	right := p.detail
 	if right == "" {

@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -531,12 +533,37 @@ func TestDoctorFixPreservesTheDuplicateItMovedAside(t *testing.T) {
 	}
 	// Nothing is deleted: the jar the heuristic dropped has to be recoverable,
 	// because the heuristic is a heuristic.
-	body, err := os.ReadFile(filepath.Join(modsDir, ".modharbor-backup", "duplicates", "old-copy.jar"))
+	//
+	// The archive is read through archive/zip rather than grepped. A jar's
+	// entries are deflated, so the literal version string appears in the file
+	// bytes only when the compressor happened to choose to store it — which
+	// varies with the Go version building the fixture. Asserting on the raw
+	// bytes passed on Go 1.27 and failed in CI, which is the test lying rather
+	// than the code being wrong.
+	preserved, err := zip.OpenReader(filepath.Join(modsDir, ".modharbor-backup", "duplicates", "old-copy.jar"))
 	if err != nil {
 		t.Fatalf("the shadowed jar was not preserved: %v", err)
 	}
-	if !strings.Contains(string(body), "0.9.0") {
-		t.Errorf("the preserved jar is not the one that was moved:\n%s", body)
+	defer preserved.Close()
+
+	var got string
+	for _, f := range preserved.File {
+		if f.Name != "fabric.mod.json" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("opening %s: %v", f.Name, err)
+		}
+		b, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("reading %s: %v", f.Name, err)
+		}
+		got = string(b)
+	}
+	if !strings.Contains(got, `"version":"0.9.0"`) {
+		t.Errorf("the preserved jar is not the one that was moved; fabric.mod.json = %s", got)
 	}
 }
 

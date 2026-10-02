@@ -1,25 +1,27 @@
 # Handoff — modharbor
 
-**Status: live at <https://github.com/MohammadMD1383/modharbor> (public).**
-Read this first, then `BACKLOG.md` for the work queue.
+**Public at <https://github.com/MohammadMD1383/modharbor>.** 31 commits on
+`main`, pushed. All 10 packages pass; `gofmt`, `go vet` clean.
+
+Read this first, then `BACKLOG.md` for the queue and `tasks/T*.md` for briefs.
 
 ---
 
-## What modharbor is
+## What it is
 
 A single static Go binary that keeps Minecraft mods working across game
-versions. Its core job is migration: you have an old instance full of mods, a
-fresh instance for a new Minecraft release, and you want the same mods working
-there without doing it by hand.
+versions. Its reason for existing is migration: an old instance full of mods,
+a fresh instance for a new Minecraft release, and you want the same mods
+working there.
 
 ```console
 modharbor migrate 26.2-fabric-mod 26.3-fabric-mod --dry-run
 modharbor migrate 26.2-fabric-mod 26.3-fabric-mod
 ```
 
-It already did this once, for real, on the author's instances: 33 mods in
-`26.2-fabric-mod`, 0 in `26.3-fabric-mod`, 23 installed, 1 carried verbatim,
-9 reported with a reason, 1 duplicate collapsed.
+It has already done this for real on the author's instances: 33 mods in,
+23 installed in `26.3-fabric-mod`, 1 copied verbatim, 9 reported with a
+reason.
 
 ---
 
@@ -27,27 +29,26 @@ It already did this once, for real, on the author's instances: 33 mods in
 
 | Path | Why |
 |---|---|
-| `BACKLOG.md` | The full work queue, ordered P0–P2, with status markers |
-| `internal/cli/tasks/T1.md` … `T4.md` | Task briefs: scope, constraints, verification |
+| `BACKLOG.md` | Work queue, ordered, with status markers and evidence |
+| `tasks/T*.md` | Task briefs: scope, constraints, verification |
 | `docs/architecture.md` | Package map, identification chain, migration algorithm |
-| `docs/providers.md` | Modrinth/CurseForge integration, how to add a provider |
-| `README.md` | What users see first |
+| `docs/providers.md` | Modrinth/CurseForge integration, adding a provider |
+| `docs/install.md` | Install paths, verified against the release pipeline |
 
 ---
 
 ## The one thing to understand before changing anything
 
-**Identification is the heart of the tool, and a single strategy is not
-enough.**
+**Identification is the heart of the tool, and name matching is not identity.**
 
-Hashing a jar and asking Modrinth (`GET /v2/version_file/{sha1}`) is exact and
-authoritative. It also fails constantly in the real world: launchers routinely
-install the **CurseForge mirror** of a mod, whose bytes differ from the
-Modrinth copy, so the hash lookup 404s even though the mod is right there on
-Modrinth. In the author's 33-mod instance, hash lookup alone resolved 27. The
-other 6 (`InventoryProfilesNext`, `common-networking`, `libIPN`,
-`yet_another_config_lib_v3`, and 2 others) were all on Modrinth and only
-findable by mod-id and name matching.
+Hashing a jar and asking Modrinth (`GET /v2/version_file/{sha1}`) is exact
+and authoritative. It also fails constantly: launchers routinely install the
+**CurseForge mirror** of a mod, whose bytes differ from the Modrinth copy, so
+the hash lookup 404s even though the mod is right there. In the author's
+33-mod instance, hash lookup alone resolved 27. The other 6
+(`InventoryProfilesNext`, `common-networking`, `libIPN`,
+`yet_another_config_lib_v3`, and 2 more) were all on Modrinth and only
+findable by mod-id and name.
 
 So `internal/resolver` tries a chain, each tagged with a confidence:
 
@@ -64,63 +65,62 @@ Every fuzzy match is cross-checked in `versionCorroborated`:
 
 1. **Loader veto.** A jar declaring Fabric cannot be a Forge-only project.
 2. **Size check.** When the project publishes a version with the same numeric
-   core, the file size must agree within 2×.
+   core, file size must agree within 2×.
 
-This exists because of a real bug: a private mod named `more-tools` version
-`1.0.0` matched the unrelated published project *More Tools (Polymer)* `1.0.0`
-— same name, same version string, 8.9 MB vs the local 2.7 MB. Migration on
-that match would have installed a stranger's mod into the user's instance.
+This exists because of a real near-miss: a private mod named `more-tools`
+version `1.0.0` matched the unrelated published *More Tools (Polymer)*
+`1.0.0` — same name, same version string, 8.9 MB against the local 2.7 MB.
+Migrating on that match would have installed a stranger's mod.
 
 **Any change to `versionCorroborated` or `sizeTolerance` must keep
-`internal/resolver/collide_test.go` passing.** Those four tests encode this
-bug; treat them as the specification.
+`internal/resolver/collide_test.go` passing.** Those four tests encode the
+incident; treat them as the specification.
 
 ### Nested jars matter for dependencies
 
 `internal/modmeta/nested.go` resolves libraries bundled inside other mods'
 jars under `jars/`. Without it, Sodium reports seven missing Fabric API
-modules and Mod Menu reports four — all false positives, all bundled inside
-the very jar that needs them. There are 129 dependency edges in the author's
-instance and all 129 are satisfied once nested jars are counted.
+modules and Mod Menu four — all bundled inside the very jar that needs them.
 
 ---
 
-## Repository state
+## The real Minecraft instances are OFF LIMITS
 
-- Branch `main` tracks `origin/main`. T3 and T4 worktrees are in flight;
-  T1 and T2 are merged and their worktrees removed.
-- Three commits on `main`: the initial implementation, then the backlog and
-  task briefs.
-- `internal/cli` has one test file. `internal/cli` coverage was 0% when the
-  backlog was written; T3 addresses it.
+**`26.3-fabric-mod` is in active play. Do not read, write, list, scan, or run
+any modharbor command against it. Do not `cd` into it. Do not `ls` it.**
+`26.2-fabric-mod` is the source instance and equally hands-off.
 
-### Worktree workflow
+This is not hypothetical caution. Two stray jars
+(`fabric-api-0.161.0%2B26.3.jar`, `sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar`)
+landed in the real 26.3 `mods/` directory during a session — duplicate Sodium
+plus duplicate Fabric API, which crashes Minecraft on launch. The `%2B`
+URL-encoding proves they were saved from a CDN URL basename (`curl -O` style),
+not by modharbor, which always uses the API-provided filename. Most likely an
+agent fetched fixtures while its working directory was the real `mods/` folder.
+They were removed and the instance verified clean.
+
+Two consequences for how work is done:
+
+- **Never count the real instances' jars as a proof of isolation.** Several
+  agents correctly refused to run that check, reasoning that inspecting a live
+  game folder is itself the risk. They were right. Prove isolation by
+  `unshare -rm`-bind-masking the real paths, as T3 did.
+- **Never `curl -O`.** It saves the URL's escaped basename. Use
+  `curl -o "$SCRATCH/…"`.
+
+Everything else happens under `/tmp`:
 
 ```bash
-git worktree list                       # see what is in flight
-git worktree add ../modharbor-<name> -b <branch> main
-# ... work, commit on the branch ...
-git worktree remove ../modharbor-<name>  # after merging
+SCRATCH=$(mktemp -d /tmp/mh-XXXXXX)
+mkdir -p "$SCRATCH/versions/testinst/mods"
+# minimal testinst.json + TLauncherAdditional.json, then:
+export MODHARBOR_MINECRAFT_DIR="$SCRATCH" \
+       XDG_CONFIG_HOME="$SCRATCH/cfg" XDG_DATA_HOME="$SCRATCH/data"
 ```
 
-Merge order matters: **T3 (test harness) branches from `main` after T1 has
-been merged**, because its brief assumes T1's fixes exist.
-
----
-
-## Active tasks and their file scopes
-
-These do not overlap, which is why they run in parallel:
-
-| Task | Branch | May touch | Status |
-|---|---|---|---|
-| T1 — P0 CLI correctness | `fix/p0-cli-correctness` | `internal/cli/**`, `README.md` | merged |
-| T2 — `watch` mode | `feat/watch` | new `internal/cli/watch.go`, one line of `root.go` | merged, verified live |
-| T3 — CLI test harness | `test/cli-harness` | `internal/cli/**_test.go` (branches after T1) | in flight |
-| T4 — progress + `--verbose` | `feat/progress-and-verbose` | `internal/cli/{download,install,add,root}.go` | in flight |
-
-T2 and T4 both add one line to `root.go`'s `AddCommand` list. Merge conflicts
-there are trivial and mechanical.
+In tests: `t.TempDir()` plus `t.Setenv` for `MODHARBOR_MINECRAFT_DIR` and the
+three `XDG_*`. Use `httptest.NewServer` for the API, never live Modrinth or
+CurseForge. CurseForge tests must use the literal `test-key`.
 
 ---
 
@@ -128,70 +128,18 @@ there are trivial and mechanical.
 
 - Go 1.23 minimum; toolchain here is much newer.
 - **Only dependency is `github.com/spf13/cobra`.** No new dependencies without
-  discussion. See `CONTRIBUTING.md`.
-- Config: `$XDG_CONFIG_HOME/modharbor/config.json`, mode 0600 because it can
-  hold an API key. State/cache: `$XDG_DATA_HOME/modharbor/state.json`.
-- The author's real Minecraft instances are at
-  `/home/mohammad/.minecraft/versions/26.2-fabric-mod` and `26.3-fabric-mod`,
-  managed by **TLauncher**. `26.3-fabric-mod` is in active play — hands off
-  entirely. Work in `/tmp`; see the section below.
-
-### Never do these in a test
-
-A test that mutates the author's real instances destroys real data. Always:
-
-```go
-t.Setenv("MODHARBOR_MINECRAFT_DIR", t.TempDir())
-t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-t.Setenv("XDG_DATA_HOME", t.TempDir())
-```
-
-Use `httptest.NewServer` for the API, never the live one. `internal/ui` writes
-to `os.Stdout`; capture it with `ui.SetWriters(buf, buf)` where output matters.
-
-### The real Minecraft instances are OFF LIMITS
-
-**`26.3-fabric-mod` is in active use — the owner is playing the game on it
-right now. Do not read, write, list, scan, or run any modharbor command
-against it. Do not `cd` into it. Do not `ls` it. Nothing.**
-
-`26.2-fabric-mod` is the source instance and equally hands-off.
-
-Build test instances under `/tmp` instead:
-
-```bash
-SCRATCH=$(mktemp -d /tmp/mh-XXXXXX)
-mkdir -p "$SCRATCH/versions/testinst/mods"
-# minimal <id>.json + TLauncherAdditional.json, then:
-export MODHARBOR_MINECRAFT_DIR="$SCRATCH" \
-       XDG_CONFIG_HOME="$SCRATCH/cfg" XDG_DATA_HOME="$SCRATCH/data"
-```
-
-That is the only permitted way to exercise a command end to end. `mktemp -d`
-under `/tmp` and full env redirection means no test can reach the real game
-even by accident.
-
-For the rare read-only sanity check the owner has asked for, ask first — and
-prefer `ls` with an absolute path over `cd`, and count jars rather than
-touching them.
-
-### Why this is written down
-
-On 2026-10-02 two stray jars (`fabric-api-0.161.0%2B26.3.jar`,
-`sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar`) appeared in the real
-`26.3-fabric-mod/mods` — duplicate Sodium and duplicate Fabric API, which
-would crash the game on launch. The `%2B` URL-encoding proves they were saved
-from a CDN URL basename (`curl -O` style), not by modharbor, which always uses
-the API-provided filename. Most likely an agent fetched fixture jars while its
-working directory was the real `mods/` folder. They were deleted and the
-instance verified clean. That must not happen while the game is running.
-
-Also never `curl -O` into a directory — it saves the URL's escaped basename.
-Always `curl -o "$SCRATCH/…"`.
+  discussion.
+- Config: `$XDG_CONFIG_HOME/modharbor/config.json`, mode 0600 (can hold an API
+  key). State: `$XDG_DATA_HOME/modharbor/state.json`.
+- Real instances are at `~/.minecraft/versions/{26.2,26.3}-fabric-mod`, managed
+  by **TLauncher**. Off limits, including for reads.
+- `internal/ui` writes to `os.Stdout`; capture with `ui.SetWriters(buf, buf)`.
+  T3 noted a single-pipe capture can deadlock — `harness_test.go` now drains
+  both streams concurrently.
 
 ### UI helper contract
 
-`ui.Success`, `ui.Warn`, `ui.Info`, `ui.Note` and `ui.Failure` **both print a
+`ui.Success`, `ui.Warn`, `ui.Info`, `ui.Note`, `ui.Failure` **both print a
 line and return a string**. Call them as statements. For a coloured fragment
 inside a larger expression use `ui.OK`, `ui.Bad`, `ui.InfoC`, `ui.Warnc`,
 `ui.Muted`, `ui.Faint`. Calling `ui.Info` inline in an expression prints in
@@ -199,7 +147,128 @@ the wrong place — that was a real bug during development.
 
 ---
 
-## Verification baseline
+## Repository state
+
+`main` tracks `origin/main`. Worktrees are created per task and removed after
+merge:
+
+```bash
+git worktree add ../modharbor-<name> -b <branch> main
+# ... work, commit on the branch ...
+git worktree remove --force ../modharbor-<name>
+```
+
+Branch from **current** `main`, not an old base — T4's merge conflicted with
+T1's earlier work for exactly this reason.
+
+---
+
+## Task history
+
+| Task | Branch | Result |
+|---|---|---|
+| T1 | `fix/p0-cli-correctness` | Four shipped defects fixed; `add --dry-run` was downloading |
+| T2 | `feat/watch` | `watch` command; verified live against a real instance |
+| T3 | `test/cli-harness` | `internal/cli` 0% → 36.3%, `internal/ui` 0 → 11.1% |
+| T4 | `feat/progress-and-verbose` | Download progress bars; `--verbose` wired |
+| T5 | `fix/export-client` | B7: export uses the app's client |
+| T6 | `chore/release-check` | Found the first release would have **failed** |
+| T7 | `test/curseforge-mrpack` | CurseForge 0% → 99.5%, mrpack 63% → 77.3% |
+| T8 | `fix/json-and-hints` | B19–B22: real JSON findings, honest exit codes |
+| T9 | `fix/curseforge-decode` | B23–B26, B30: client works on real payloads |
+
+Briefs live in `tasks/T1.md` … `T9.md`. Follow the same shape for new ones.
+
+### What delegating actually bought
+
+Nine of the eighteen closed items were found *by* the work rather than planned
+in advance. Three worth remembering:
+
+- **T3 refused to write tests that would have locked bugs in place.** It
+  reported four defects it could not cover without editing source. All four
+  were real — `doctor --json` was emitting `"findings": [{}, {}]`.
+- **T7's coverage work exposed that the CurseForge client cannot decode real
+  responses.** Tests written to pin behaviour found the behaviour was wrong.
+- **T6's `goreleaser check` passed clean on the original config.** The release
+  bug (duplicate asset upload, which GitHub rejects) only appeared from an
+  actual snapshot build. Static validation was not the safety net it looked
+  like.
+
+### How to review a subagent's work
+
+Do not take the report at face value — two agents were cut off mid-task and
+left work that built and passed tests while being wrong.
+
+- Verify with your own `gofmt`/`build`/`vet`/`test`, including `-race`.
+- **Reproduce the bug claims yourself** before merging the fix.
+- Check the red-test evidence by reverting each fix and confirming the test
+  goes red. T9's: removing the numeric branch fails 10 tests, removing the
+  null rejection fails 11.
+- When a test fails, first ask whether the test is wrong. One of T9's tests
+  contradicted its own fixture.
+- Watch for scope creep into files other agents own.
+
+---
+
+## Coverage
+
+| Package | Coverage |
+|---|---|
+| `internal/provider/curseforge` | 98.4% |
+| `internal/store` | 83.1% |
+| `internal/mrpack` | 77.3% |
+| `internal/provider/modrinth` | 64.3% |
+| `internal/modmeta` | 63.1% |
+| `internal/migrate` | 58.9% |
+| `internal/resolver` | 58.8% |
+| `internal/instance` | 57.9% |
+| `internal/cli` | 43.4% |
+| `internal/ui` | 11.1% |
+
+---
+
+## Backlog: 22 of 31 closed
+
+Remaining, in rough priority order:
+
+| Item | What |
+|---|---|
+| **B27** | `downloadInto` fsyncs the temp file but not the containing directory after the rename — a crash right after can leave a jar missing despite a passing digest. `writeOverride` and `export.go`'s `copyFile` don't fsync at all. |
+| **B9** | Content-addressed jar cache keyed by SHA-512, hard-linked into `mods/`. Makes repeated migrations near-instant. |
+| **B10** | `sync` a saved profile — `.modharbor/profile.toml` pinning exact versions, so an install is reproducible. |
+| **B11** | Surface duplicate/shadowed mods on `scan`; `doctor` finds them but `scan` already holds the identity. |
+| **B12** | `--loader` as a global flag, for modded folders with no version JSON. |
+| **B28** | `overrideHint` is unreachable (the package's only uncovered function). |
+| **B29** | `resolveURL` failures lose the file name; `downloadInto` errors are wrapped correctly, these are not. |
+| — | `add --json` emits `"installed": [{}]` — `installedMod` has only unexported fields. Needs a schema decision, so it gets its own brief. |
+
+`BACKLOG.md` carries the full detail plus the evidence for closed items.
+
+---
+
+## Suggested next steps, in order
+
+1. **Tag `v0.1.0`.** Everything is ready: pipeline proven across 6 targets
+   (linux/darwin/windows × amd64/arm64), checksums verified, CHANGELOG section
+   present, `docs/install.md` written. No tag exists yet. Until then
+   `go install github.com/MohammadMD1383/modharbor/cmd/modharbor@latest` does
+   not work. Cutting the tag is the owner's call — say so if asking.
+
+   ```bash
+   git tag v0.1.0 && git push origin v0.1.0
+   ```
+
+2. **B27** (fsync durability). It is a data-integrity issue on the download
+   path, and the fix is small.
+
+3. **B10** (`sync`). The feature people actually want when they care about a
+   specific modpack configuration.
+
+4. **B9** (blob cache). B10 first — a profile makes the cache's value obvious.
+
+5. B11, B12, B28, B29 as convenient.
+
+### Verify before you finish
 
 ```
 gofmt -l internal/ cmd/     # must be empty
@@ -209,35 +278,17 @@ go test ./...
 make check                  # fmt-check + vet + test
 ```
 
-CI also runs `go test -race` on ubuntu/macos/windows across Go 1.23, 1.24 and
-stable.
-
----
-
-## Suggested next steps, in order
-
-1. **Merge T1**, then re-run the verification baseline. T1 fixes four shipped
-   defects, including `add --dry-run` writing files anyway.
-2. **Merge T2 and T4** — independent, trivial conflicts.
-3. **Start T3** off the updated `main`. The regression test for the
-   swallowed-error bug (B1) is the single most valuable test to add.
-4. **Push a first release.** The repo is public but has no tagged release, so
-   `go install github.com/MohammadMD1383/modharbor/cmd/modharbor@latest` does
-   not work yet. Tag `v0.1.0` to trigger `.github/workflows/release.yml`,
-   which uses goreleaser. Before that, run `goreleaser check` locally — the
-   config has only been validated as YAML, never against the schema (B17).
-5. Then work down `BACKLOG.md`: B7 (`export` builds its own client), then the
-   P1 features — `watch` (B8), blob cache (B9), profiles/`sync` (B10).
+CI runs `go test -race` on ubuntu/macos/windows across Go 1.23, 1.24 and stable.
 
 ---
 
 ## Known rough edges
 
-- `export` constructs its own Modrinth client instead of accepting one
-  (`internal/mrpack/export.go`), so it ignores a configured base URL (B7).
-- `goreleaser.yaml` references `LICENSE` and `README.md` in archives with
-  wildcards; both now exist, but the nfpm section still omits docs by design
-  because nfpm fails on a glob matching nothing.
-- CurseForge support is implemented and tested only by construction — the
-  client has no tests (B15) and is inert without an API key. Everything in the
-  author's workflow works without it.
+- `import` downloads silently — its progress transfer would have to live in
+  `internal/mrpack`, out of scope when the plumbing was added.
+- `add --json` emits `"installed": [{}]` (see above).
+- The CurseForge file cache has no singleflight, so concurrent misses for one
+  id each spend a request. Harmless.
+- CurseForge support is inert without an API key, so despite 98.4% coverage it
+  has never run against the live API. Everything in the author's workflow
+  works without it.

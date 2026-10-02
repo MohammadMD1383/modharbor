@@ -189,33 +189,38 @@ abandons the rest of the pack, and override mismatches write no config.
 These only bite once a user sets an API key, and then they bite silently:
 the client reports "publishes nothing" rather than failing loudly.
 
-### [ ] B23. `SortableGameVersions []string` fails on numeric ids
-`internal/provider/curseforge/curseforge.go:56,71` declare it as `[]string`,
-but CurseForge sends game version **ids**, which are numbers. One such file
-anywhere in a listing fails the entire decode
-(`cannot unmarshal number into ModFile.sortableGameVersions.0`), so the
-project reports "publishes nothing" and every sibling file is lost.
+### [x] B23. `SortableGameVersions []string` fails on numeric ids
+Was: declared `[]string`, but CurseForge sends game version **ids**, so one
+such file anywhere in a listing failed the entire decode and took every
+sibling file with it.
 
-Note the inconsistency: `GameFile.GameVersions` is already `[]int` while
-`ModFile.GameVersions` is `[]string`. Fix by accepting both shapes — a
-tolerant unmarshaller — rather than guessing which one the API sends.
+Done (T9, `bc0cd62`): a `VersionID` type in `internal/provider/curseforge/decode.go`
+accepts a number or a string and keeps the server's literal text. The ids keep
+their meaning — `GameFile.GameVersions` is still `[]int`, `ModFile.GameVersions`
+still names.
 
-### [ ] B24. `hydrateFingerprints` copies numeric ids into `GameVersions`
-Line 393: `f.GameVersions = f.SortableGameVersions` when the former is empty.
-If those are ids, `Supports` compares `"432"` against `"26.3"` and rejects
-every file for every Minecraft version. Ids must be resolved to names, or not
-copied at all.
+### [x] B24. `hydrateFingerprints` copies numeric ids into `GameVersions`
+Was: `Supports` compared `"432"` against `"26.3"` and rejected every file.
 
-### [ ] B25. `Supports` silently ignores its `loader` argument
-`curseforge.go:412-415` is `_ = loader`. CurseForge records loaders on the
-*project*, so a Forge-only file passes a Fabric check — and the loader veto in
-`internal/resolver` is exactly what stops a wrong-loader install. Resolve the
-loader from the project's categories, or drop the parameter so callers cannot
-rely on it.
+Done (T9): ids resolve through CurseForge's version table, fetched lazily and
+cached — a listing that already carries names spends no extra request, one that
+needs it pays exactly one however many files it holds. A failed lookup is not
+cached, since pinning a 500 would leave the client blind for the whole run.
 
-### [ ] B26. A `null` response body decodes to a zero value with no error
-Every endpoint. A phantom empty project, no error. `do` should reject `null`
-explicitly.
+### [x] B25. `Supports` silently ignores its `loader` argument
+Was: `_ = loader`, so a Forge build passed a Fabric check.
+
+Done (T9): the parameter is **removed**. Worth knowing why that is safe —
+`migrate` already skips CurseForge-only projects outright
+(`internal/migrate/migrate.go:392`), so a CurseForge file is never selected as
+a candidate and `Supports` is never on the install path. The parameter was a
+trap, not a safeguard. `Mod.SupportsLoader` now carries the loader half
+honestly; it currently has no caller, which is correct given the above.
+
+### [x] B26. A `null` response body decodes to a zero value with no error
+Done (T9): `do` rejects it as `ErrNullResponse`, kept distinct from a mod that
+genuinely publishes no files — the two read identically otherwise. Also folded
+in B30: `(*Error).Error()` now names the URL it failed against.
 
 ---
 
@@ -238,9 +243,9 @@ A user sees `version vvvv has no downloadable file` with no indication which
 of thirty mods it refers to. `downloadInto` errors *are* wrapped with
 `f.Name()`; make these consistent.
 
-### [~] B30. `(*Error).Error()` is context-free
-`curseforge: 503 ` for a 5xx with an empty body; the project id appears only in
-the `URL` field. Folded into T9, which owns this file.
+### [x] B30. `(*Error).Error()` is context-free
+Was `curseforge: 503 ` for a 5xx with an empty body. Done in T9: the message
+names the URL it failed against.
 
 ---
 

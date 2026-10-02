@@ -189,8 +189,8 @@ Requires Go 1.23 or newer. The only dependency is
 Prebuilt static binaries (`CGO_ENABLED=0`) for linux, darwin and windows on
 amd64/arm64 are attached to
 [GitHub Releases](https://github.com/MohammadMD1383/modharbor/releases) as
-`tar.gz` (plus `.deb`/`.rpm` for linux), with a `checksums.txt`; download one,
-put it on your `PATH`, and check it:
+`tar.gz` (`zip` on windows), plus `.deb`/`.rpm` for linux and a
+`checksums.txt`; download one, put it on your `PATH`, and check it:
 
 ```console
 $ modharbor version

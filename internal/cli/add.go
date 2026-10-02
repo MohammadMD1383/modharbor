@@ -62,7 +62,7 @@ considered.
 			}
 
 			ctx := cmd.Context()
-			installed, skipped, err := installProjects(ctx, a, inst, projects, withDeps, a.Channel())
+			installed, skipped, err := installProjects(ctx, a, inst, projects, withDeps, dryRun, a.Channel())
 			if err != nil {
 				return fail("%v", err)
 			}
@@ -70,27 +70,37 @@ considered.
 			if flagJSON {
 				return printJSON(map[string]any{
 					"instance":  inst.ID,
-					"installed": installed,
+					"installed": len(installed),
 					"skipped":   skipped,
+					"dryRun":    dryRun,
 				})
 			}
 
 			ui.Heading("Install", inst.Label())
 			ui.Blank()
 			for _, f := range installed {
-				ui.Task("add", ui.Pad(f.name, 30), ui.OK(f.version)+ui.Faint("  "+f.filename))
+				state := "add"
+				if dryRun {
+					state = "busy"
+				}
+				ui.Task(state, truncateName(f.name, 30), ui.OK(f.version)+ui.Faint("  "+f.filename))
 			}
 			for _, s := range skipped {
-				ui.Task("skip", ui.Pad(s, 30), ui.Warnc("already installed"))
+				ui.Task("skip", truncateName(s, 30), ui.Warnc("already installed"))
 			}
 			ui.Blank()
 			if len(installed) == 0 && len(skipped) == 0 {
 				ui.Warn("nothing to do")
+			} else if dryRun {
+				// The wording has to match what happened: nothing was written,
+				// so claiming "installed" would be a lie the user acts on.
+				ui.Success("would install %d mod(s)", len(installed))
 			} else {
 				ui.Success("installed %d mod(s)", len(installed))
 			}
 			if dryRun {
-				ui.Hint("this was a dry run; remove --dry-run to install for real")
+				ui.Note("dry run: nothing was downloaded and mods/ is unchanged")
+				ui.Hint("re-run without --dry-run to install for real")
 			}
 			ui.Blank()
 			return nil
@@ -114,13 +124,32 @@ type installedMod struct {
 	url      string
 	sha512   string
 	size     int64
+	// dryRun marks a mod that was planned but deliberately not downloaded,
+	// so the summary can say "would install" instead of claiming it happened.
+	dryRun bool
 }
 
 // splitArgs separates a trailing instance reference from project arguments.
+//
+// The instance may be positional — `add sodium 26.3-fabric-mod` — or supplied
+// with -i/--instance, and the two must resolve the same way. When no argument
+// names an instance we fall back to the flag rather than to nothing; leaving it
+// empty is not the same thing, because ResolveInstance would then quietly use a
+// different instance than the user asked for on the command line.
 func splitArgs(args []string) (instRef string, projects []string) {
-	// The instance may be given as the final argument when it names a
-	// directory. We treat an argument containing a path separator or that
-	// resolves to an existing instance as the instance.
+	if ref, rest := positionalInstance(args); ref != "" {
+		return ref, rest
+	}
+	return flagInstance, args
+}
+
+// positionalInstance picks an instance out of the positional arguments.
+//
+// An argument is taken as the instance when it contains a path separator or
+// otherwise looks like an instance name. Guessing this way is deliberate: a
+// Modrinth slug never contains a path separator, so the only way to misread it
+// is to name a mod after an instance, which is not worth a prompt.
+func positionalInstance(args []string) (instRef string, projects []string) {
 	for i, arg := range args {
 		if strings.ContainsAny(arg, "/\\") {
 			return arg, args[:i]

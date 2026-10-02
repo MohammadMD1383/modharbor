@@ -24,7 +24,12 @@ import (
 // Dependencies declared by the chosen version are followed recursively when
 // withDeps is true, which is how things like "Sodium" and its core library
 // both land in the folder.
-func installProjects(ctx context.Context, a *app.App, inst *instance.Info, projects []string, withDeps bool, channel modrinth.Channel) ([]installedMod, []string, error) {
+//
+// When dryRun is set the function resolves exactly as far as it otherwise
+// would and reports the same plan, but skips the download and the write.
+// Resolution needs the API, so a dry run still talks to Modrinth; what it must
+// never do is put a jar on disk and then claim it wrote nothing.
+func installProjects(ctx context.Context, a *app.App, inst *instance.Info, projects []string, withDeps bool, dryRun bool, channel modrinth.Channel) ([]installedMod, []string, error) {
 	cli := a.MR()
 	loader := loaderName(inst.Type)
 	if loader == "" {
@@ -86,12 +91,19 @@ func installProjects(ctx context.Context, a *app.App, inst *instance.Info, proje
 			sha512:   file.SHA512(),
 			url:      url,
 			size:     file.Size,
+			dryRun:   dryRun,
 		}
-		if err := downloadInto(ctx, url, filepath.Join(modsDir, file.Filename), file.SHA512()); err != nil {
-			return nil, nil, fmt.Errorf("downloading %s: %w", proj.Title, err)
+		if !dryRun {
+			if err := downloadInto(ctx, url, filepath.Join(modsDir, file.Filename), file.SHA512()); err != nil {
+				return nil, nil, fmt.Errorf("downloading %s: %w", proj.Title, err)
+			}
 		}
 		installed = append(installed, mod)
-		ui.Task("add", ui.Pad(truncateName(proj.Title, 30), 30),
+		state := "add"
+		if dryRun {
+			state = "busy"
+		}
+		ui.Task(state, truncateName(proj.Title, 30),
 			ui.OK(ver.VersionNumber)+ui.Faint("  "+ui.HumanBytes(file.Size)))
 
 		if withDeps {

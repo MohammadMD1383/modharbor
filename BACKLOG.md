@@ -153,14 +153,80 @@ tested, but no command calls them, so `Execute`'s `try: modharbor instances`
 hint can never fire. Users get `ResolveInstance`'s thinner message instead.
 Either wire it in or delete it — T3's existing test is a signal it is wanted.
 
-### [ ] B15. Coverage for `internal/provider/curseforge`
-Currently 0%. The client is untested even though it is reachable via
-`config set curseForge.apiKey`.
+### [x] B15. Coverage for `internal/provider/curseforge`
+Was 0%. Now 99.5% (T7, `74a2df3`): API key scoping, error mapping, malformed
+and `null` bodies, 429 not retried, cache behaviour including "a 404 is not
+cached", newest-file selection, fingerprint hydration, and the guarantee that
+the API key never goes to a CDN host.
 
-### [ ] B16. Tests for `internal/mrpack` install-failure paths
-Export is covered. `Install` is covered for the skip case, but not for a
-checksum mismatch or a truncated download, which are the paths that must not
-leave partial files.
+Writing the tests exposed four real defects in the client, now B23–B26.
+
+### [x] B16. Tests for `internal/mrpack` install-failure paths
+Now 77.3% (T7). Checksum mismatch, truncated download, lying Content-Length,
+error statuses and unreachable mirrors all assert the destination is left
+clean — jar absent *and* no abandoned temp file. Also pinned: a duplicated
+pack entry downloads once, a stale jar is replaced then skipped, a failure
+abandons the rest of the pack, and override mismatches write no config.
+
+---
+
+## P0 — CurseForge client cannot decode real payloads (found by T7)
+
+These only bite once a user sets an API key, and then they bite silently:
+the client reports "publishes nothing" rather than failing loudly.
+
+### [ ] B23. `SortableGameVersions []string` fails on numeric ids
+`internal/provider/curseforge/curseforge.go:56,71` declare it as `[]string`,
+but CurseForge sends game version **ids**, which are numbers. One such file
+anywhere in a listing fails the entire decode
+(`cannot unmarshal number into ModFile.sortableGameVersions.0`), so the
+project reports "publishes nothing" and every sibling file is lost.
+
+Note the inconsistency: `GameFile.GameVersions` is already `[]int` while
+`ModFile.GameVersions` is `[]string`. Fix by accepting both shapes — a
+tolerant unmarshaller — rather than guessing which one the API sends.
+
+### [ ] B24. `hydrateFingerprints` copies numeric ids into `GameVersions`
+Line 393: `f.GameVersions = f.SortableGameVersions` when the former is empty.
+If those are ids, `Supports` compares `"432"` against `"26.3"` and rejects
+every file for every Minecraft version. Ids must be resolved to names, or not
+copied at all.
+
+### [ ] B25. `Supports` silently ignores its `loader` argument
+`curseforge.go:412-415` is `_ = loader`. CurseForge records loaders on the
+*project*, so a Forge-only file passes a Fabric check — and the loader veto in
+`internal/resolver` is exactly what stops a wrong-loader install. Resolve the
+loader from the project's categories, or drop the parameter so callers cannot
+rely on it.
+
+### [ ] B26. A `null` response body decodes to a zero value with no error
+Every endpoint. A phantom empty project, no error. `do` should reject `null`
+explicitly.
+
+---
+
+## P2 — mrpack robustness (found by T7)
+
+### [ ] B27. The temp-file-then-rename contract is not durable
+`downloadInto` fsyncs the temp file but never fsyncs the containing directory
+after the rename, so a crash immediately after can leave the jar missing or
+zero-length even though the digest passed. `writeOverride` and `export.go`'s
+`copyFile` do not fsync the file at all. The contract should be uniform.
+
+### [ ] B28. `overrideHint` is unreachable
+`resolveURL` is only called for `pack.Mods()`, whose paths start with `mods/`,
+so `isOverridePath` can never be true and the hint can never print. Either
+resolve overrides too, or drop the helper. (`overrideHint` is the package's
+one uncovered function.)
+
+### [ ] B29. `resolveURL` failures lose the file name
+A user sees `version vvvv has no downloadable file` with no indication which
+of thirty mods it refers to. `downloadInto` errors *are* wrapped with
+`f.Name()`; make these consistent.
+
+### [ ] B30. `(*Error).Error()` is context-free
+`curseforge: 503 ` for a 5xx with an empty body; the project id appears only in
+the `URL` field. Include the URL in the message.
 
 ### [ ] B17. `goreleaser check` in CI
 The release config has been validated as YAML but never against the

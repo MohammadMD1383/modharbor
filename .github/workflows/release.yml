@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build a release from, for example v1.2.3'
+        description: "Existing tag to build a release from, for example v1.2.3"
         required: true
         type: string
 
@@ -22,8 +22,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # On a tag push github.ref_name is the tag; on workflow_dispatch the tag
-  # comes from the input.
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
@@ -42,7 +40,6 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Resolve tag
-        shell: bash
         run: |
           if [ -z "$TAG" ]; then
             echo "::error::no tag to release (set the 'tag' input when dispatching manually)"
@@ -56,14 +53,14 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # Cheap insurance for a path that only ever runs on a tag: if the release
-      # config is invalid, find out here, on the gate, rather than after the
-      # release job has already started creating a GitHub release.
+      # Cheap insurance for a path that only ever runs on a tag: find out here,
+      # on the gate, rather than after the release job has started creating a
+      # GitHub release. `check` does not build, so it stays fast.
       - name: goreleaser check
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: '~> v2'
+          version: "~> v2"
           args: check
 
   release:
@@ -74,10 +71,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # goreleaser needs the full history and all tags to generate the
-          # changelog and to derive the version.
           fetch-depth: 0
-          ref: ${{ env.TAG }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -86,23 +80,23 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: goreleaser
+      - name: Release
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           # Pinned to the v2 line that .goreleaser.yaml declares rather than
           # `latest`: a release should be built by a known goreleaser, not by
           # whatever happens to be newest on the day the tag is pushed.
-          version: '~> v2'
+          version: "~> v2"
           args: release --clean
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # No asset-upload step here on purpose. goreleaser creates the GitHub
       # release and uploads its own artifacts to it: the six archives, the four
       # linux packages and checksums.txt. Re-uploading those same files with a
-      # second action adds nothing — GitHub rejects an asset whose name already
-      # exists on a release, so the step could only ever turn a successful
-      # release into a red check. The per-target binaries under
-      # dist/modharbor_<os>_<arch>/ are build intermediates, not release assets,
-      # and are deliberately not uploaded.
+      # second action adds nothing, and GitHub rejects an asset whose name
+      # already exists on a release, so the step could only ever turn a
+      # successful release into a red check. The per-target binaries under
+      # dist/modharbor_<os>_<arch>/ are build intermediates, not release
+      # assets, and are deliberately not uploaded.

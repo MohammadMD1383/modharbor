@@ -76,7 +76,17 @@ func (i *Info) Label() string {
 	if mc == "" {
 		mc = "unknown"
 	}
-	return i.Name + " (MC " + mc + ", " + strings.Title(string(t)) + ")" //nolint:staticcheck
+	return i.Name + " (MC " + mc + ", " + titleType(string(t)) + ")"
+}
+
+// titleType uppercases the first letter of a loader name ("fabric" ->
+// "Fabric"). strings.Title did this before it was deprecated; the types here
+// are single lowercase words, so a full title-casing library is overkill.
+func titleType(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // Dir returns the mods directory, creating nothing.

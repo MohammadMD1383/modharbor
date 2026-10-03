@@ -58,14 +58,14 @@ func ColorEnabled() bool {
 // quiet suppresses decorative output; explicit reflects --color/--no-color so
 // the user's explicit choice always wins over auto-detection.
 func InitColor(quiet, explicit bool) {
-	switch {
-	case explicit && quiet:
+	// An explicit --color outranks both auto-detection and --quiet: --quiet is
+	// about noise, and answering someone who asked for colour with grey text is
+	// worse than ignoring --quiet.
+	if explicit {
 		SetColorEnabled(true)
-	case explicit && !quiet:
-		SetColorEnabled(false)
-	default:
-		SetColorEnabled(autoDetectColor() && !quiet)
+		return
 	}
+	SetColorEnabled(autoDetectColor() && !quiet)
 }
 
 func autoDetectColor() bool {

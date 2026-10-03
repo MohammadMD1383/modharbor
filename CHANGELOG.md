@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An explicit `--color` is no longer silently ignored.** `ui.InitColor`
+  treated `explicit` as "the user wants colour" only when `--quiet` was *also*
+  set; without `--quiet` it resolved to colour off. The two switch arms were
+  swapped, so the one path that was supposed to guarantee colour produced grey
+  text instead. No released behaviour changes — the CLI never passes
+  `explicit`, it calls `ui.SetColorEnabled` for `--color`/`--no-color` directly
+  — but the exported function contradicted its own documentation. Pinned by
+  `internal/ui/color_test.go`, which covers the whole
+  `quiet` × `explicit` × auto-detected matrix.
 - **`release.yml` no longer re-uploads the release assets.** goreleaser already
   creates the GitHub release *and* uploads every one of its artifacts to it —
   the six archives, the four linux packages and `checksums.txt`. The extra

@@ -219,11 +219,11 @@ left work that built and passed tests while being wrong.
 | `internal/mrpack` | 76.9% |
 | `internal/provider/modrinth` | 64.3% |
 | `internal/modmeta` | 63.1% |
+| `internal/instance` | 60.3% |
+| `internal/ui` | 60.1% |
 | `internal/migrate` | 58.9% |
 | `internal/resolver` | 58.8% |
-| `internal/instance` | 60.3% |
 | `internal/cli` | 46.0% |
-| `internal/ui` | 31.2% |
 
 ---
 

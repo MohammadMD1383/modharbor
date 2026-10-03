@@ -55,6 +55,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tables and panels no longer draw a box that does not close.** Four layout
+  defects in `internal/ui/table.go`, all of which produced a visibly ragged
+  right edge rather than an error:
+
+  - A table's horizontal rules were one cell wider than the rows under them.
+    `totalWidth` added a two-space gutter for every column, but cells are
+    joined by a gutter *between* each pair, so n columns have n−1 of them.
+  - When a table was wider than the terminal, the rules were drawn at the
+    *unshrunk* width while the rows were correctly squeezed to fit — a
+    189-cell rule over a 60-cell body on a 100-column terminal. One unbroken
+    run of box-drawing characters has no break opportunity in it, so the rule
+    was the part that wrapped.
+  - Every titled panel's top edge was 2–3 cells wider than its body. The rule
+    beside the label was sized from the title rather than from the label it
+    actually draws, and the two disagreed by the label's own padding spaces.
+  - A panel title longer than the terminal was never truncated, so the box was
+    pushed up to 448 cells wide and `strings.Repeat` was asked for a negative
+    count of the rule.
+
+  Also: the header row is now trimmed like a body row, so no line of a table
+  ends in padding, and the dead `shrinkWeights` is gone — unexported,
+  unreferenced, and its comment described behaviour it did not have. All four
+  fixes are pinned by `internal/ui/table_test.go`, which covers `table.go` at
+  100% (`internal/ui` 31.2% → 60.1%).
 - **Status messages with no arguments are no longer run through `Sprintf`.**
   `ui.Success`/`Failure`/`Warn`/`Info`/`Note` share one formatter that called
   `fmt.Sprintf(format, a...)` unconditionally, so a message passed as data with

@@ -1,0 +1,36 @@
+# Line endings are checked in with LF and are checked out with LF, on every
+# platform including Windows.
+#
+# This file exists because of a concrete CI failure. GitHub's windows-latest
+# image configures `core.autocrlf=true`, so `actions/checkout` wrote every file
+# into the working tree with CRLF line endings. Nothing was actually
+# misformatted, but `gofmt` reads CRLF as a formatting difference, so
+# `gofmt -l internal/ cmd/` reported all 96 .go files and the `gofmt` step of
+# all three `windows-latest` legs failed on every run:
+#
+#     ##[error]gofmt reported files that are not formatted
+#     ##[error]run 'gofmt -w internal\app\app.go'
+#     ... one per file
+#
+# That is worse than a red build: the step could no longer catch a genuine
+# formatting failure on Windows, because every file always looked unformatted.
+#
+# `eol=lf` overrides the runner's `core.autocrlf`, so the checkout is LF there
+# too and the check means the same thing on all three operating systems. The
+# attributes below agree with `.editorconfig`, which editors already honour;
+# this file is what makes git agree with it.
+
+# Default for everything not matched below: let git detect text vs binary (the
+# repository tracks no binaries, so this is text in practice), but always check
+# text out with LF.
+* text=auto eol=lf
+
+# Go source is called out as well as covered by the rule above, because it is
+# the one extension the `gofmt` CI step depends on and should not be at the
+# mercy of a later edit to the default rule.
+*.go text eol=lf
+
+# The module files are matched byte for byte against the checksum database, so
+# a stray CRLF here would change every hash in go.sum.
+go.mod text eol=lf
+go.sum text eol=lf

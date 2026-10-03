@@ -191,6 +191,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed the unreachable `overrideHint`.** `resolveURL` only ever sees
   `mods/` entries, never overrides, so the override branch could never print;
   the error no longer carries its `%s`.
+- **`gofmt` no longer fails on all three Windows CI legs.** The repository had no
+  `.gitattributes`, and GitHub's `windows-latest` image configures
+  `core.autocrlf=true`, so `actions/checkout` wrote every file into the working
+  tree with CRLF endings. `gofmt` reads CRLF as a formatting difference, so
+  `gofmt -l internal/ cmd/` reported **all 96 `.go` files** and the step failed
+  on every run:
+
+  ```
+  ##[error]gofmt reported files that are not formatted
+  ##[error]run 'gofmt -w internal\app\app.go'
+  ... one per file
+  ```
+
+  Nothing was actually misformatted. That made the step worse than useless: it
+  could no longer catch a genuine formatting failure on Windows, because every
+  file always looked unformatted. `.gitattributes` now pins `eol=lf` for text,
+  which overrides the runner's `core.autocrlf`, and agrees with the
+  `.editorconfig` editors already honoured. Verified by cloning with
+  `core.autocrlf=true` and re-materialising the working tree: `gofmt -l` goes
+  from 96 files to 0, with `git add --renormalize .` a no-op (every tracked
+  blob was already LF). Linux and macOS behaviour is unchanged.
 
 ## [0.1.0] - 2026-10-02
 

@@ -257,9 +257,8 @@ Fixed: new `syncDir` helper (`internal/mrpack/sync.go`) fsyncs the
 destination directory after every rename; `writeOverride`, `copyFile` and
 `Save` now also fsync the temp file before it. `internal/migrate`'s jar-install
 path (`downloadTo`, `copyFile`) follows the same contract via its own `syncDir`,
-as does `internal/cli`'s `fetchFile` via its own `syncDir`.
-`internal/store`'s `Save` still uses the old
-file-sync-without-dir-sync pattern.
+as does `internal/cli`'s `fetchFile` via its own `syncDir`, and
+`internal/store`'s `Save` via its own `syncDir`.
 
 ### [x] B28. `overrideHint` is unreachable
 Was: `resolveURL` is only called for `pack.Mods()`, whose paths start with

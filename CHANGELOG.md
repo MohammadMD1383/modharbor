@@ -67,8 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already says so (`tar.gz` (`zip` on windows)); the `Known issues` entry
   predated that fix.
 - **Durable installs: fsync the file and the containing directory.** `mrpack`
-  (`downloadInto`, `writeOverride`, `copyFile`, `Save`) and `migrate`
-  (`downloadTo`, `copyFile`) now fsync the temp file before rename and the
+  (`downloadInto`, `writeOverride`, `copyFile`, `Save`), `migrate`
+  (`downloadTo`, `copyFile`), `cli` (`fetchFile`) and `store` (`Save`)
+  now fsync the temp file before rename and the
   destination directory after it, so a crash right after a passing digest
   cannot leave a jar missing or zero-length.
 - **Failed `.mrpack` downloads now name the file.** A `resolveURL` failure is

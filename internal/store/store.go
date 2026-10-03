@@ -334,8 +334,23 @@ func (s *Store) Save() error {
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return err
 	}
+	if err := syncDir(dir); err != nil {
+		return err
+	}
 	s.dirty = false
 	return nil
+}
+
+// syncDir fsyncs the directory so a rename into it is durable: without this
+// a crash right after os.Rename can leave the entry missing even though the
+// file contents were synced. It mirrors internal/mrpack/sync.go.
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 // Stats summarises the store for the `cache` command.

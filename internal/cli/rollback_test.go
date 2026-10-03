@@ -178,15 +178,6 @@ func TestNextStampGivesUpRatherThanLoopingForever(t *testing.T) {
 	}
 }
 
-// suffixes returns the -NNN disambiguators nextStamp walks through.
-func suffixes(from, to int) []string {
-	var out []string
-	for i := from; i <= to; i++ {
-		out = append(out, fmt.Sprintf("-%03d", i))
-	}
-	return out
-}
-
 // ─── loadSnapshots ──────────────────────────────────────────────────────────
 
 func TestLoadSnapshotsListsNewestFirst(t *testing.T) {

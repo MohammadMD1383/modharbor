@@ -232,11 +232,12 @@ after the rename, so a crash immediately after can leave the jar missing or
 zero-length even though the digest passed. `writeOverride` and `export.go`'s
 `copyFile` do not fsync the file at all. The contract should be uniform.
 
-### [ ] B28. `overrideHint` is unreachable
-`resolveURL` is only called for `pack.Mods()`, whose paths start with `mods/`,
-so `isOverridePath` can never be true and the hint can never print. Either
-resolve overrides too, or drop the helper. (`overrideHint` is the package's
-one uncovered function.)
+### [x] B28. `overrideHint` is unreachable
+Was: `resolveURL` is only called for `pack.Mods()`, whose paths start with
+`mods/`, so `isOverridePath` could never be true and the hint could never
+print. Fixed: dropped the helper and the `%s` in the error — overrides are
+extracted verbatim from the archive, never downloaded, so `resolveURL` should
+never see one.
 
 ### [x] B29. `resolveURL` failures lose the file name
 Was: a user saw `version vvvv has no downloadable file` with no indication

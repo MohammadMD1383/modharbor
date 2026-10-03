@@ -109,7 +109,7 @@ func resolveURL(ctx context.Context, mr *modrinth.Client, pack *Modpack, f File)
 
 	dep, ok := pack.DependencyFor(f.Path)
 	if !ok || dep.VersionID == "" {
-		return "", fmt.Errorf("no download URL%s and no version id recorded", overrideHint(f.Path))
+		return "", fmt.Errorf("no download URL and no version id recorded")
 	}
 
 	versions, err := mr.VersionsBatch(ctx, []string{dep.VersionID})
@@ -127,15 +127,6 @@ func resolveURL(ctx context.Context, mr *modrinth.Client, pack *Modpack, f File)
 		return file.URL, nil
 	}
 	return "", fmt.Errorf("version %s has no downloadable file", dep.VersionID)
-}
-
-// overrideHint names the situation in the error message, because an override
-// entry legitimately has no URL and the user needs to know that is expected.
-func overrideHint(path string) string {
-	if isOverridePath(path) {
-		return " (the pack carries this file as an override, so the archive itself is incomplete)"
-	}
-	return ""
 }
 
 // installedDigests maps sha1 to file name for everything already in modsDir.

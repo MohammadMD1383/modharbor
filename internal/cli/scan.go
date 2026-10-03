@@ -33,13 +33,19 @@ type ScannedMod struct {
 }
 
 type scanJSON struct {
-	Instance   string       `json:"instance"`
-	MCVersion  string       `json:"mcVersion"`
-	Loader     string       `json:"loader"`
-	Total      int          `json:"total"`
-	Identified int          `json:"identified"`
-	Unresolved int          `json:"unresolved"`
-	Mods       []ScannedMod `json:"mods"`
+	Instance   string               `json:"instance"`
+	MCVersion  string               `json:"mcVersion"`
+	Loader     string               `json:"loader"`
+	Total      int                  `json:"total"`
+	Identified int                  `json:"identified"`
+	Unresolved int                  `json:"unresolved"`
+	Duplicates []duplicateGroupJSON `json:"duplicates,omitempty"`
+	Mods       []ScannedMod         `json:"mods"`
+}
+
+type duplicateGroupJSON struct {
+	ModID string   `json:"modId"`
+	Files []string `json:"files"`
 }
 
 func newScanCmd() *cobra.Command {
@@ -247,6 +253,36 @@ func newScanJSON(inst *instance.Info, rows []ScannedMod) scanJSON {
 			out.Identified++
 		}
 	}
+	for _, g := range duplicateGroups(rows) {
+		files := make([]string, len(g))
+		for i, r := range g {
+			files[i] = r.FileName
+		}
+		out.Duplicates = append(out.Duplicates, duplicateGroupJSON{ModID: g[0].ModID, Files: files})
+	}
+	return out
+}
+
+// duplicateGroups returns the sets of jars that claim the same loader mod id.
+// It mirrors the duplicate check in diagnose: scan already holds every jar's
+// identity, so surfacing it here saves a separate doctor run.
+func duplicateGroups(rows []ScannedMod) [][]ScannedMod {
+	byModID := map[string][]ScannedMod{}
+	for _, r := range rows {
+		if r.ModID == "" {
+			continue
+		}
+		byModID[r.ModID] = append(byModID[r.ModID], r)
+	}
+	var out [][]ScannedMod
+	for _, group := range byModID {
+		if len(group) < 2 {
+			continue
+		}
+		sort.Slice(group, func(i, j int) bool { return group[i].FileName < group[j].FileName })
+		out = append(out, group)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0].ModID < out[j][0].ModID })
 	return out
 }
 
@@ -306,6 +342,18 @@ func renderScan(inst *instance.Info, rows []ScannedMod, showAll bool) {
 		}
 		ui.Blank()
 		ui.Hint("pass --all to see them inline, or `modharbor link <sha1> <project>` to map one by hand")
+	}
+
+	if dups := duplicateGroups(rows); len(dups) > 0 {
+		for _, g := range dups {
+			names := make([]string, len(g))
+			for i, r := range g {
+				names[i] = r.FileName
+			}
+			ui.Warn("%d jars provide the mod %q: %s", len(g), g[0].ModID, strings.Join(names, ", "))
+		}
+		ui.Hint("only one will load; run `modharbor doctor --fix` to move the older copies aside")
+		ui.Blank()
 	}
 
 	ui.Success("identified %s of %s mods", fmt.Sprint(identified), fmt.Sprint(len(rows)))

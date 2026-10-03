@@ -173,11 +173,8 @@ func diagnose(ctx context.Context, a *app.App, inst *instance.Info, rows []Scann
 	}
 
 	// ── duplicate jars ──────────────────────────────────────────────────
-	for modID, group := range byModID {
-		if len(group) < 2 {
-			continue
-		}
-		sort.Slice(group, func(i, j int) bool { return group[i].FileName < group[j].FileName })
+	for _, group := range duplicateGroups(rows) {
+		modID := group[0].ModID
 		names := make([]string, len(group))
 		for i, g := range group {
 			names[i] = g.FileName

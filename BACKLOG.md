@@ -95,10 +95,17 @@ an instance, so an install is reproducible: `modharbor sync` brings the
 instance to exactly that set, adding and removing as needed. This is what
 people actually want when they care about a specific modpack configuration.
 
-### [ ] B11. Detect duplicate and shadowed mods on `scan`
+### [x] B11. Detect duplicate and shadowed mods on `scan`
 `doctor` finds duplicates, but `scan` does not surface them while it already
 has every jar's identity in hand. One `doctor`-style warning at the end of a
 scan would save a separate command for the common case.
+
+Done: `scan` groups rows by loader mod id via `duplicateGroups` (shared with
+`diagnose`, so the two can never disagree) and prints one warning per group
+plus a `run modharbor doctor --fix` hint. `scan --json` carries a
+`duplicates: [{modId, files}]` array, omitted when empty. Pinned by
+`scan_duplicates_test.go`: human warning, JSON payload, and quiet on a clean
+instance.
 
 ### [ ] B12. Respect `--loader` when the instance has none
 Vanilla instances have no loader, so every command falls back to `fabric`.

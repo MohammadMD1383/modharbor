@@ -109,7 +109,7 @@ jobs:
       # the third-party action, replace this step with `go vet ./...` plus
       # `gofmt -l internal/ cmd/`, which is exactly what the test job does.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           # Pinned, not `latest`. `--default` only exists in golangci-lint v2;
           # with `version: latest` the action resolved a v1.64.8 binary, which

@@ -196,7 +196,10 @@ func downloadInto(ctx context.Context, url, dest, wantSHA1 string) error {
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, dest)
+	if err := os.Rename(tmpName, dest); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(dest))
 }
 
 // extractOverrides writes the pack's overrides/ tree into dest, verifying each
@@ -280,6 +283,10 @@ func writeOverride(zf *zip.File, target string, want File) (bool, error) {
 		tmp.Close()
 		return false, err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return false, err
+	}
 	if err := tmp.Close(); err != nil {
 		return false, err
 	}
@@ -292,5 +299,8 @@ func writeOverride(zf *zip.File, target string, want File) (bool, error) {
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		return false, err
 	}
-	return true, os.Rename(tmpName, target)
+	if err := os.Rename(tmpName, target); err != nil {
+		return false, err
+	}
+	return true, syncDir(filepath.Dir(target))
 }

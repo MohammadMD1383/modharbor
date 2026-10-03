@@ -418,6 +418,10 @@ func Save(path string, mp *Modpack, overridesDir string) error {
 		tmp.Close()
 		return fmt.Errorf("%s: %w", path, err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -427,7 +431,7 @@ func Save(path string, mp *Modpack, overridesDir string) error {
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	return nil
+	return syncDir(dir)
 }
 
 func writeArchive(w io.Writer, mp *Modpack, overridesDir string) error {

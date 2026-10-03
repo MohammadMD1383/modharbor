@@ -226,11 +226,17 @@ in B30: `(*Error).Error()` now names the URL it failed against.
 
 ## P2 — mrpack robustness (found by T7)
 
-### [ ] B27. The temp-file-then-rename contract is not durable
+### [x] B27. The temp-file-then-rename contract is not durable
 `downloadInto` fsyncs the temp file but never fsyncs the containing directory
 after the rename, so a crash immediately after can leave the jar missing or
 zero-length even though the digest passed. `writeOverride` and `export.go`'s
 `copyFile` do not fsync the file at all. The contract should be uniform.
+
+Fixed: new `syncDir` helper (`internal/mrpack/sync.go`) fsyncs the
+destination directory after every rename; `writeOverride`, `copyFile` and
+`Save` now also fsync the temp file before it. Same-package scope only —
+`internal/migrate`, `internal/cli` and `internal/store` still use the old
+file-sync-without-dir-sync pattern.
 
 ### [x] B28. `overrideHint` is unreachable
 Was: `resolveURL` is only called for `pack.Mods()`, whose paths start with

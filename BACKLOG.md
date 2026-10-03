@@ -256,9 +256,9 @@ zero-length even though the digest passed. `writeOverride` and `export.go`'s
 Fixed: new `syncDir` helper (`internal/mrpack/sync.go`) fsyncs the
 destination directory after every rename; `writeOverride`, `copyFile` and
 `Save` now also fsync the temp file before it. `internal/migrate`'s jar-install
-path (`downloadTo`, `copyFile`) follows the same contract via its own `syncDir`.
-Same-package scope only —
-`internal/cli` and `internal/store` still use the old
+path (`downloadTo`, `copyFile`) follows the same contract via its own `syncDir`,
+as does `internal/cli`'s `fetchFile` via its own `syncDir`.
+`internal/store`'s `Save` still uses the old
 file-sync-without-dir-sync pattern.
 
 ### [x] B28. `overrideHint` is unreachable

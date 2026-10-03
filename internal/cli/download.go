@@ -166,7 +166,10 @@ func fetchFile(ctx context.Context, url, dest, wantSHA512 string, tr *transfer) 
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, dest)
+	if err := os.Rename(tmpName, dest); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(dest))
 }
 
 // sortVersionsByPreference orders versions newest-first while preferring

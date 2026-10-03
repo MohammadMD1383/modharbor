@@ -84,7 +84,7 @@ func downloadTo(ctx context.Context, url, destPath, expectSHA512, _ string) erro
 	if err := os.Rename(tmpName, destPath); err != nil {
 		return err
 	}
-	return nil
+	return syncDir(filepath.Dir(destPath))
 }
 
 // copyFile copies src to dst atomically via a temp file.
@@ -122,7 +122,10 @@ func copyFile(src, dst string) error {
 	if err := os.Chmod(tmpName, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, dst)
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(dst))
 }
 
 // backupDirName is the subdirectory replaced files are moved into.

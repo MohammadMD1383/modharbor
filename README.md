@@ -315,6 +315,7 @@ embedded under `overrides/` with its real digests — the pack always round-trip
 | `-v, --verbose` | Verbose logging |
 | `--offline` | Use cached data only; make no network requests |
 | `--channel <name>` | `release`, `beta` or `alpha` for this run |
+| `--loader <name>` | `fabric`, `forge`, `neoforge` or `quilt`; assumed when the instance declares none (e.g. a vanilla folder with no loader metadata) |
 | `-h, --help`, `-V, --version` | Cobra's own |
 
 ---

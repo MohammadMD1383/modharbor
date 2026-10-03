@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--loader` is now a global flag.** `modharbor outdated --loader forge`
+  (and every other instance-taking command, plus `migrate` for its target)
+  assumes that loader when the instance declares none, instead of silently
+  falling back to `fabric`. Useful for a modded folder with no version JSON.
+  `search --loader` keeps working: its old per-command flag is now this same
+  global one.
 - **`.goreleaser.yaml` is now validated on every PR.** A new
   `release-config` job in `ci.yml` runs `goreleaser check`, which validates the
   release config against goreleaser's own schema without building anything.

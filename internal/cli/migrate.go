@@ -81,6 +81,11 @@ Nothing is written unless you confirm, so it is safe to explore with --dry-run.
 			if err != nil {
 				return fail("target instance: %v", err)
 			}
+			// --loader applies to the target: version selection reads the
+			// destination's loader, the source side is only identified.
+			if err := applyLoaderOverride(dst); err != nil {
+				return err
+			}
 			if src.Path == dst.Path {
 				return fail("source and target are the same instance (%s)", src.ID)
 			}

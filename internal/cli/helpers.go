@@ -78,11 +78,74 @@ func resolveInstance(a *app.App, args []string) (*instance.Info, error) {
 	if err != nil && a.Config.DefaultInstance == "" {
 		return nil, err
 	}
-	return a.ResolveInstance(ref)
+	inst, err := a.ResolveInstance(ref)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyLoaderOverride(inst); err != nil {
+		return nil, err
+	}
+	return inst, nil
 }
 
 // errNoInstance is returned when no instance could be determined.
 var errNoInstance = &missingInstanceError{}
+
+// parseLoaderFlag normalises a --loader value to an instance type.
+func parseLoaderFlag(s string) (instance.Type, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "fabric":
+		return instance.TypeFabric, nil
+	case "quilt":
+		return instance.TypeQuilt, nil
+	case "forge":
+		return instance.TypeForge, nil
+	case "neoforge":
+		return instance.TypeNeoForge, nil
+	default:
+		return "", fail("unknown loader %q; use fabric, forge, neoforge or quilt", s)
+	}
+}
+
+// validateLoaderFlag fails fast on an unusable --loader value, before any
+// command runs, so every command reports the same error. A usable value is
+// normalised in place, so downstream users can pass flagLoader straight to
+// the Modrinth API without re-casing it.
+func validateLoaderFlag() error {
+	if flagLoader == "" {
+		return nil
+	}
+	t, err := parseLoaderFlag(flagLoader)
+	if err != nil {
+		return err
+	}
+	flagLoader = string(t)
+	return nil
+}
+
+// applyLoaderOverride assumes the --loader flag's loader for an instance that
+// declares none. Vanilla instances have no loader metadata, so every query
+// would otherwise fall back to fabric; an explicit flag is the only way to ask
+// for forge builds against such a folder.
+//
+// When the flag is set it wins even over a detected loader, because an
+// explicit flag is intent. The override is reported on stderr when --verbose
+// is set, since the label the command prints will no longer match what the
+// version JSON declared.
+func applyLoaderOverride(inst *instance.Info) error {
+	if flagLoader == "" || inst == nil {
+		return nil
+	}
+	t, err := parseLoaderFlag(flagLoader)
+	if err != nil {
+		return err
+	}
+	if inst.Type != t {
+		verbosef("loader override: assuming %s (instance declares %s)", t, loaderLabel(inst.Type))
+		inst.Type = t
+	}
+	return nil
+}
 
 type missingInstanceError struct{}
 

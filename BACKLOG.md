@@ -107,10 +107,21 @@ plus a `run modharbor doctor --fix` hint. `scan --json` carries a
 `scan_duplicates_test.go`: human warning, JSON payload, and quiet on a clean
 instance.
 
-### [ ] B12. Respect `--loader` when the instance has none
-Vanilla instances have no loader, so every command falls back to `fabric`.
-Expose `--loader` as a global flag so `modharbor outdated --loader forge`
+### [x] B12. Respect `--loader` when the instance has none
+Vanilla instances have no loader, so every command fell back to `fabric`.
+`--loader` is now a global flag, so `modharbor outdated --loader forge`
 works against a modded folder with no version JSON.
+
+Done: `--loader fabric|forge|neoforge|quilt` is validated in
+`PersistentPreRunE` (same error on every command) and applied in
+`resolveInstance`, which covers every single-instance command; `migrate`
+applies it to the target, since version selection reads the destination's
+loader. `search`'s old per-command `--loader` is now the same global flag,
+so its example is unchanged. Pinned by `internal/cli/loader_flag_test.go`
+(override on vanilla, override wins over a detected loader, absent leaves
+the instance alone, unknown rejected, normalised in place); verified live
+that `outdated --json` reports `"loader": "forge"` with the flag and
+`"vanilla"` without.
 
 ### [x] B13. Report download progress
 `fetchFile` now takes a `*transfer` and drives the `ui.Progress` bar that

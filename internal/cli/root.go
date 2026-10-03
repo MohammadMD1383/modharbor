@@ -31,6 +31,7 @@ var (
 	flagVerbose     bool
 	flagOffline     bool
 	flagChannel     string
+	flagLoader      string
 )
 
 // Execute runs the CLI and returns a process exit code.
@@ -112,6 +113,9 @@ Start here:
 		SilenceErrors: true,
 		Version:       version.String(),
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateLoaderFlag(); err != nil {
+				return err
+			}
 			// Colour flags are tri-state: unset means auto-detect.
 			if !colourSet {
 				switch {
@@ -143,6 +147,7 @@ Start here:
 	pf.BoolVarP(&flagVerbose, "verbose", "v", false, "report how each mod was resolved (stderr)")
 	pf.BoolVar(&flagOffline, "offline", false, "use cached data only; make no network requests")
 	pf.StringVar(&flagChannel, "channel", "", "release channel: release, beta or alpha")
+	pf.StringVar(&flagLoader, "loader", "", "mod loader to assume when the instance declares none (fabric, forge, neoforge, quilt)")
 
 	// Cobra's own --version flag needs a nicer presentation.
 	root.SetVersionTemplate("modharbor " + version.String() + "\n")

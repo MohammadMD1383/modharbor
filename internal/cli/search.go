@@ -13,7 +13,6 @@ import (
 func newSearchCmd() *cobra.Command {
 	var (
 		limit    int
-		loader   string
 		sortBy   string
 		category string
 	)
@@ -40,8 +39,8 @@ default when an instance is in scope, so results are installable as-is.
 			}
 
 			opts := modrinth.SearchOptions{Limit: limit}
-			if loader != "" {
-				opts.Loader = loader
+			if flagLoader != "" {
+				opts.Loader = flagLoader
 			}
 			if category != "" {
 				opts.Categories = []string{category}
@@ -119,7 +118,6 @@ default when an instance is in scope, so results are installable as-is.
 
 	f := cmd.Flags()
 	f.IntVarP(&limit, "limit", "n", 20, "maximum results")
-	f.StringVar(&loader, "loader", "", "filter by loader: fabric, forge, neoforge, quilt")
 	f.StringVarP(&sortBy, "sort", "s", "relevance", "sort: relevance, downloads, follows, newest")
 	f.StringVar(&category, "category", "", "filter by category, e.g. optimization or hud")
 	return cmd

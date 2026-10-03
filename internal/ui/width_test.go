@@ -156,8 +156,15 @@ func TestTruncateMarksWhatItCutWithAnEllipsis(t *testing.T) {
 // painted strings through Pad and Truncate. So the width helpers have to be
 // correct whether or not colour happened to be on when they were called.
 func TestWidthHelpersMeasureTheSameWithColourOnOrOff(t *testing.T) {
-	orig := colorEnabled
-	t.Cleanup(func() { colorEnabled = orig })
+	orig := colorEnabled.Load()
+	t.Cleanup(func() {
+		if orig == nil {
+			colorEnabled.Store(nil)
+		} else {
+			v := *orig
+			colorEnabled.Store(&v)
+		}
+	})
 
 	const text = "sodium-0.10.0.jar"
 

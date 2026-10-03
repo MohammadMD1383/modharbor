@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 // ANSI control sequences.
@@ -34,18 +35,20 @@ func wrapSeq(seq, s string) string {
 }
 
 // colorEnabled is the resolved flag; nil means "auto-detect on first use".
-var colorEnabled *bool
+// It is an atomic pointer because Spinner/Progress read it from background
+// goroutines while tests (and InitColor) may write it concurrently.
+var colorEnabled atomic.Pointer[bool]
 
 // SetColorEnabled forces colour output on or off.
 func SetColorEnabled(on bool) {
 	v := on
-	colorEnabled = &v
+	colorEnabled.Store(&v)
 }
 
 // ColorEnabled reports whether ANSI colour should be emitted.
 func ColorEnabled() bool {
-	if colorEnabled != nil {
-		return *colorEnabled
+	if v := colorEnabled.Load(); v != nil {
+		return *v
 	}
 	return autoDetectColor()
 }

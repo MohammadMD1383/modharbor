@@ -238,10 +238,13 @@ so `isOverridePath` can never be true and the hint can never print. Either
 resolve overrides too, or drop the helper. (`overrideHint` is the package's
 one uncovered function.)
 
-### [ ] B29. `resolveURL` failures lose the file name
-A user sees `version vvvv has no downloadable file` with no indication which
-of thirty mods it refers to. `downloadInto` errors *are* wrapped with
-`f.Name()`; make these consistent.
+### [x] B29. `resolveURL` failures lose the file name
+Was: a user saw `version vvvv has no downloadable file` with no indication
+which of thirty mods it referred to. `downloadInto` errors *were* wrapped with
+`f.Name()`; these were not. Fixed: `Install` wraps the `resolveURL` error the
+same way, so e.g. `sodium.jar: no download URL and no Modrinth client
+available`. Pinned by an assertion in
+`TestInstallRefusesAnUnusablePack` (reverting the wrap fails both subtests).
 
 ### [x] B30. `(*Error).Error()` is context-free
 Was `curseforge: 503 ` for a 5xx with an empty body. Done in T9: the message

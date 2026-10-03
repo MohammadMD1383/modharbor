@@ -66,7 +66,7 @@ func Install(ctx context.Context, mr *modrinth.Client, pack *Modpack, modsDir st
 
 		url, err := resolveURL(ctx, mr, pack, f)
 		if err != nil {
-			return installed, skipped, err
+			return installed, skipped, fmt.Errorf("%s: %w", f.Name(), err)
 		}
 		dest := filepath.Join(modsDir, f.Name())
 		if err := downloadInto(ctx, url, dest, want); err != nil {

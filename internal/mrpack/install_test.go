@@ -799,6 +799,9 @@ func TestInstallRefusesAnUnusablePack(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Errorf("error %q does not explain why: want %q", err, tc.wantErr)
 				}
+				if !strings.Contains(err.Error(), "sodium.jar") {
+					t.Errorf("error %q does not name the file it refers to", err)
+				}
 				if n := s.hits(); n != 0 {
 					t.Fatalf("%d request(s) were made for an entry that cannot be fetched", n)
 				}

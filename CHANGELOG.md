@@ -55,6 +55,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Status messages with no arguments are no longer run through `Sprintf`.**
+  `ui.Success`/`Failure`/`Warn`/`Info`/`Note` share one formatter that called
+  `fmt.Sprintf(format, a...)` unconditionally, so a message passed as data with
+  a literal percent in it had its tail replaced by a verb error:
+
+  ```
+  ui.Info("shards 95% done")   ->  • shards 95%!d(MISSING)one
+  ```
+
+  With no arguments the message is now returned verbatim; with arguments the
+  behaviour is unchanged, so every existing call site is unaffected. No current
+  message contains a stray `%`, so this changes no released output — it closes
+  a trap for the next one that does. Pinned by
+  `internal/ui/output_test.go`.
 - **An explicit `--color` is no longer silently ignored.** `ui.InitColor`
   treated `explicit` as "the user wants colour" only when `--quiet` was *also*
   set; without `--quiet` it resolved to colour off. The two switch arms were

@@ -166,13 +166,28 @@ func Info(format string, a ...any) string {
 
 // Note prints a dim explanatory line.
 func Note(format string, a ...any) string {
-	s := paint(Palette.Faint, fmt.Sprintf(format, a...))
+	s := paint(Palette.Faint, sprint(format, a...))
 	Line(s)
 	return s
 }
 
+// sprint renders a message for the status helpers above.
+//
+// A caller with nothing to interpolate passes data, not a format string, and
+// data can legitimately contain a percent sign — "shards 95% done" is a
+// sentence modharbor has reason to print. Handing that to Sprintf anyway eats
+// the rest of the line as a verb ("95% done" becomes "95%!d(MISSING)one"), so
+// the argumentless case is returned verbatim. With arguments the behaviour is
+// unchanged.
+func sprint(format string, a ...any) string {
+	if len(a) == 0 {
+		return format
+	}
+	return fmt.Sprintf(format, a...)
+}
+
 func line(sym, color, format string, a ...any) string {
-	return paint(color, sym) + " " + fmt.Sprintf(format, a...)
+	return paint(color, sym) + " " + sprint(format, a...)
 }
 
 // ─── Headings ───────────────────────────────────────────────────────────────

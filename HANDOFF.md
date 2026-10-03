@@ -223,7 +223,7 @@ left work that built and passed tests while being wrong.
 | `internal/resolver` | 58.8% |
 | `internal/instance` | 60.3% |
 | `internal/cli` | 46.0% |
-| `internal/ui` | 20.1% |
+| `internal/ui` | 31.2% |
 
 ---
 

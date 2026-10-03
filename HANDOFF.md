@@ -1,6 +1,6 @@
 # Handoff — modharbor
 
-**Public at <https://github.com/MohammadMD1383/modharbor>.** 46 commits on
+**Public at <https://github.com/MohammadMD1383/modharbor>.** 52 commits on
 `main`, pushed. All 10 packages pass; `gofmt`, `go vet` clean.
 
 Read this first, then `BACKLOG.md` for the queue and `tasks/T*.md` for briefs.
@@ -215,14 +215,14 @@ left work that built and passed tests while being wrong.
 | Package | Coverage |
 |---|---|
 | `internal/provider/curseforge` | 98.4% |
-| `internal/store` | 83.1% |
-| `internal/mrpack` | 77.3% |
+| `internal/store` | 82.6% |
+| `internal/mrpack` | 76.9% |
 | `internal/provider/modrinth` | 64.3% |
 | `internal/modmeta` | 63.1% |
 | `internal/migrate` | 58.9% |
 | `internal/resolver` | 58.8% |
-| `internal/instance` | 57.9% |
-| `internal/cli` | 43.4% |
+| `internal/instance` | 60.3% |
+| `internal/cli` | 46.0% |
 | `internal/ui` | 11.1% |
 
 ---

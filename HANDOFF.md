@@ -217,11 +217,11 @@ left work that built and passed tests while being wrong.
 | `internal/provider/curseforge` | 98.4% |
 | `internal/store` | 82.6% |
 | `internal/mrpack` | 76.9% |
+| `internal/migrate` | 74.8% |
 | `internal/provider/modrinth` | 64.3% |
 | `internal/modmeta` | 63.1% |
 | `internal/instance` | 60.3% |
 | `internal/ui` | 60.1% |
-| `internal/migrate` | 58.9% |
 | `internal/resolver` | 58.8% |
 | `internal/cli` | 46.0% |
 

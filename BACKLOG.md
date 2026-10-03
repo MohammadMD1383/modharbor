@@ -348,6 +348,38 @@ modharbor think that was X?", and the data already existed on `ScannedMod`.
 Unmatched jars are reported too, since that is what answers "why is this
 folder empty?"
 
+### [x] B33. `rollback` had no tests, and its archive could not be rolled back
+`internal/cli/rollback.go` is the whole recovery story — every jar modharbor
+replaces is first moved into `mods/.modharbor-backup/<stamp>/` — and none of it
+was tested. Seventeen functions sat at 0%.
+
+Writing the tests found three defects, all on that path:
+
+- **`nextStamp` and `loadSnapshots` disagreed about what a snapshot is named.**
+  `nextStamp` disambiguates a same-second collision with a `-NNN` suffix;
+  `loadSnapshots` gated on a bare `time.Parse(rollbackLayout, name)`, which
+  rejects a suffix. The archive a rollback writes was therefore invisible to
+  `--list` and unreachable by `--to` — in exactly the case `nextStamp`'s own
+  comment describes, a rollback following an update inside the same second.
+  Fixed by `isRestorePoint`, which strips an optional numeric suffix first. The
+  suffix deliberately stays *after* the layout's trailing `Z`, since the sort is
+  a reverse string compare and `-001` must read as newer than the bare stamp.
+- **`rollback --list --json` changed the type of `.snapshots`.** An array when
+  there is something to show, a *count* when there is not, because the empty
+  case fell through to `renderNoSnapshots`'s `rollbackJSON`. A consumer
+  iterating `.snapshots[]` failed on exactly the instances with nothing to
+  restore. The list form now keeps its own shape.
+- **`rollback --list` never printed the count.** `plural()` returns the word,
+  not the phrase, and the summary interpolated it alone: `snapshots, 58 B`.
+
+`internal/cli/rollback_test.go` covers the snapshot layer end to end — the
+write-then-list round trip, `nextStamp` collision handling including its
+documented give-up fallback, the bucket exclusion, newest-first ordering, the
+restore/overwrite/archive split, `moveFile`'s no-partial-file guarantee, and
+the command's own `--list`, `--to`, `--dry-run`, `--json` and `--quiet`
+surfaces. `internal/cli` 46.0% → 55.8%; `rollback.go` is at 78.8% overall and
+100% per function except the two filesystem-failure branches.
+
 ---
 
 ## Notes for future work

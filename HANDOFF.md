@@ -234,11 +234,11 @@ left work that built and passed tests while being wrong.
 | `internal/modmeta` | 63.1% |
 | `internal/instance` | 60.3% |
 | `internal/ui` | 60.1% |
-| `internal/cli` | 46.0% |
+| `internal/cli` | 55.8% |
 
 ---
 
-## Backlog: 29 of 32 closed
+## Backlog: 30 of 33 closed
 
 Remaining, in rough priority order:
 
@@ -251,9 +251,24 @@ Remaining, in rough priority order:
 Since this was last written, B11 (duplicate warning on `scan`), B12
 (global `--loader`), B27 (fsync durability), B28 (unreachable
 `overrideHint`), B29 (`resolveURL` file name), B31 (`versionPlausible`
-rejecting mc-first version decorations), and the `add --json`
-`installed: [{}]` schema have all been fixed and recorded in
+rejecting mc-first version decorations), B33 (`rollback`'s own archive was
+unrestorable, and `--list --json` changed the type of `.snapshots`), and the
+`add --json` `installed: [{}]` schema have all been fixed and recorded in
 `BACKLOG.md` / `CHANGELOG.md`.
+
+### `rollback` is the recovery story — read its invariant before changing it
+
+Every jar modharbor replaces is moved into `mods/.modharbor-backup/<stamp>/`
+first, so an update that breaks the game is recoverable. A rollback then moves
+the current `mods/` contents into a *fresh* snapshot before restoring, which is
+what makes the restore itself undoable.
+
+The invariant that was broken, and is now pinned by
+`internal/cli/rollback_test.go`: **whatever `nextStamp` writes, `loadSnapshots`
+must list and `pickSnapshot` must accept.** They were two halves of one format
+and only one of them knew about the disambiguating suffix, so the archive a
+rollback writes was the single directory it could not see. Any new naming in
+that directory has to round-trip through a test before it ships.
 
 `BACKLOG.md` carries the full detail plus the evidence for closed items.
 

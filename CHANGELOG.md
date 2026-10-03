@@ -55,6 +55,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rollback can no longer leave behind the one thing it cannot undo.** The
+  archive a rollback writes — every jar that was in `mods/`, swept aside before
+  the restore — is what makes the restore undoable, and it is named by
+  `nextStamp`. On a same-second collision `nextStamp` disambiguates with a
+  `-NNN` suffix, but `loadSnapshots` decided what was a restore point with a
+  bare `time.Parse(rollbackLayout, name)`, which rejects any suffix. So in
+  exactly the case `nextStamp`'s own comment describes — a rollback following an
+  update inside the same second — the archive was invisible to `--list` and
+  unreachable by `--to`. The promise printed to the user ("the restore is
+  undoable") was false.
+
+  Snapshot names are now parsed by `isRestorePoint`, which strips an optional
+  numeric suffix before applying the layout. The suffix stays *after* the
+  trailing `Z`, which is what keeps the reverse string compare in
+  `loadSnapshots` chronological: `-001` is a greater name, so the later
+  snapshot still sorts first. Pinned by
+  `internal/cli/rollback_test.go`, which drives the whole
+  write-then-list round trip.
+- **`rollback --list --json` no longer changes the type of `.snapshots`
+  depending on whether anything is in it.** With snapshots present the payload
+  carries an array of objects; with none it fell through to `renderNoSnapshots`,
+  whose `rollbackJSON` reports the same key as a *count*. A consumer doing
+  `.snapshots[]` therefore failed on precisely the instances that had nothing
+  to restore. The list form now keeps its own shape and emits `[]`.
+- **`rollback --list` now prints how many snapshots there are.** The summary
+  line interpolated `plural(...)`, which returns the *word* and not the phrase,
+  so the count was never printed: it read `snapshots, 58 B`. Every other call
+  site pairs it with the number explicitly.
 - **Mods whose Modrinth version number puts the game version first are no
   longer reported unmatched.** A CurseForge-mirror jar declares the bare mod
   version (`3.7.1`) where Modrinth publishes the same build decorated

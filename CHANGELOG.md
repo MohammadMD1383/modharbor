@@ -45,13 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only ever re-upload files that already existed on the release, which GitHub
   rejects. The first tagged release would have ended with a published release
   and a red workflow run.
-
-### Known issues
-
-- `README.md`'s install section says the prebuilt binaries are attached as
-  `tar.gz`. Windows artifacts are `.zip` (every other platform is `.tar.gz`).
-  `docs/install.md` is correct; the README line still needs the same
-  correction.
+- **Removed the stale `README.md` install-section note.** Windows release
+  artifacts are `.zip` while every other platform is `.tar.gz`, and the README
+  already says so (`tar.gz` (`zip` on windows)); the `Known issues` entry
+  predated that fix.
 
 ## [0.1.0] - 2026-10-02
 

@@ -1,6 +1,6 @@
 # Handoff — modharbor
 
-**Public at <https://github.com/MohammadMD1383/modharbor>.** 31 commits on
+**Public at <https://github.com/MohammadMD1383/modharbor>.** 46 commits on
 `main`, pushed. All 10 packages pass; `gofmt`, `go vet` clean.
 
 Read this first, then `BACKLOG.md` for the queue and `tasks/T*.md` for briefs.
@@ -227,20 +227,20 @@ left work that built and passed tests while being wrong.
 
 ---
 
-## Backlog: 22 of 31 closed
+## Backlog: 28 of 30 closed
 
 Remaining, in rough priority order:
 
 | Item | What |
 |---|---|
-| **B27** | `downloadInto` fsyncs the temp file but not the containing directory after the rename — a crash right after can leave a jar missing despite a passing digest. `writeOverride` and `export.go`'s `copyFile` don't fsync at all. |
 | **B9** | Content-addressed jar cache keyed by SHA-512, hard-linked into `mods/`. Makes repeated migrations near-instant. |
 | **B10** | `sync` a saved profile — `.modharbor/profile.toml` pinning exact versions, so an install is reproducible. |
-| **B11** | Surface duplicate/shadowed mods on `scan`; `doctor` finds them but `scan` already holds the identity. |
-| **B12** | `--loader` as a global flag, for modded folders with no version JSON. |
-| **B28** | `overrideHint` is unreachable (the package's only uncovered function). |
-| **B29** | `resolveURL` failures lose the file name; `downloadInto` errors are wrapped correctly, these are not. |
-| — | `add --json` emits `"installed": [{}]` — `installedMod` has only unexported fields. Needs a schema decision, so it gets its own brief. |
+
+Since this was last written, B11 (duplicate warning on `scan`), B12
+(global `--loader`), B27 (fsync durability), B28 (unreachable
+`overrideHint`), B29 (`resolveURL` file name), and the `add --json`
+`installed: [{}]` schema have all been fixed and recorded in
+`BACKLOG.md` / `CHANGELOG.md`.
 
 `BACKLOG.md` carries the full detail plus the evidence for closed items.
 
@@ -316,15 +316,10 @@ one of these had been sitting in the repo, passing locally.
    finally works. Also worth watching CI on `main` go green for the first time
    in its history, which is what fix 1 above unblocked.
 
-2. **B27** (fsync durability). It is a data-integrity issue on the download
-   path, and the fix is small.
-
-3. **B10** (`sync`). The feature people actually want when they care about a
+2. **B10** (`sync`). The feature people actually want when they care about a
    specific modpack configuration.
 
-4. **B9** (blob cache). B10 first — a profile makes the cache's value obvious.
-
-5. B11, B12, B28, B29 as convenient.
+3. **B9** (blob cache). B10 first — a profile makes the cache's value obvious.
 
 ### Verify before you finish
 
@@ -342,11 +337,8 @@ CI runs `go test -race` on ubuntu/macos/windows across Go 1.23, 1.24 and stable.
 
 ## Known rough edges
 
-- `import` downloads silently — its progress transfer would have to live in
-  `internal/mrpack`, out of scope when the plumbing was added.
-- `add --json` emits `"installed": [{}]` (see above).
 - The CurseForge file cache has no singleflight, so concurrent misses for one
   id each spend a request. Harmless.
-- CurseForge support is inert without an API key, so despite 98.4% coverage it
+- CurseForge support is inert without an API key, so despite ~98% coverage it
   has never run against the live API. Everything in the author's workflow
   works without it.

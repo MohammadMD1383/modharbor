@@ -74,6 +74,7 @@ considered.
 				return printJSON(map[string]any{
 					"instance":  inst.ID,
 					"installed": len(installed),
+					"mods":      installedModsJSON(installed),
 					"skipped":   skipped,
 					"dryRun":    dryRun,
 				})
@@ -130,6 +131,39 @@ type installedMod struct {
 	// dryRun marks a mod that was planned but deliberately not downloaded,
 	// so the summary can say "would install" instead of claiming it happened.
 	dryRun bool
+}
+
+// installedModJSON is the wire contract for one entry of `add --json`.
+// installedMod itself keeps unexported fields, so encoding it directly would
+// emit `{}` per mod and leave a script with the counts and nothing else.
+type installedModJSON struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	File    string `json:"file"`
+	SHA1    string `json:"sha1,omitempty"`
+	SHA512  string `json:"sha512,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Size    int64  `json:"size,omitempty"`
+	DryRun  bool   `json:"dryRun,omitempty"`
+}
+
+// installedModsJSON converts a plan into its machine-readable form. The result
+// is never nil so an empty plan encodes as `[]`, not `null`.
+func installedModsJSON(mods []installedMod) []installedModJSON {
+	out := make([]installedModJSON, 0, len(mods))
+	for _, m := range mods {
+		out = append(out, installedModJSON{
+			Name:    m.name,
+			Version: m.version,
+			File:    m.filename,
+			SHA1:    m.sha1,
+			SHA512:  m.sha512,
+			URL:     m.url,
+			Size:    m.size,
+			DryRun:  m.dryRun,
+		})
+	}
+	return out
 }
 
 // splitArgs separates a trailing instance reference from project arguments.

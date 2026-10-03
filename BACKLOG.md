@@ -266,11 +266,15 @@ names the URL it failed against.
 
 ---
 
-## Known limitation, not yet scheduled
+## Known limitation, now fixed
 
-`add --json` emits `"installed": [{}]` — `installedMod` has only unexported
-fields. Fixing it means adding JSON tags and deciding a schema, so it needs
-its own brief rather than riding along with another task.
+`add --json` carried only counts (`installed`, `skipped`), so a script could
+see that one mod was installed but not which one. Fixed: the payload now
+includes a `mods` array (`name`, `version`, `file`, digests, `url`, `size`)
+via an exported `installedModJSON` shape — encoding `installedMod` directly
+would emit `[{}]` since its fields are unexported. `installed` stays a count
+for compatibility; an empty plan encodes as `[]`, not `null`. Pinned by
+`internal/cli/add_json_test.go`.
 
 ---
 

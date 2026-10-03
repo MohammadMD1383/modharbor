@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`docs/install.md`**, documenting the real artifact matrix — which file name
   to download for each platform, what the `.deb`/`.rpm` install, how to verify
   `checksums.txt`, and which install paths modharbor does *not* provide.
+- **`scan` now surfaces duplicate/shadowed mods.** A `doctor`-style warning
+  per duplicate loader mod id at the end of the run, plus a `duplicates`
+  array under `--json`, so the common case needs no separate `doctor` run.
+- **`add --json` now names the mods it installed.** The payload carries a
+  `mods` array (`name`, `version`, `file`, digests, `url`, `size`) alongside
+  the `installed`/`skipped` counts; an empty plan encodes as `[]`, not `null`.
 
 ### Changed
 
@@ -60,6 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artifacts are `.zip` while every other platform is `.tar.gz`, and the README
   already says so (`tar.gz` (`zip` on windows)); the `Known issues` entry
   predated that fix.
+- **Durable installs: fsync the file and the containing directory.** `mrpack`
+  (`downloadInto`, `writeOverride`, `copyFile`, `Save`) and `migrate`
+  (`downloadTo`, `copyFile`) now fsync the temp file before rename and the
+  destination directory after it, so a crash right after a passing digest
+  cannot leave a jar missing or zero-length.
+- **Failed `.mrpack` downloads now name the file.** A `resolveURL` failure is
+  wrapped with the entry's file name, the same way `downloadInto` errors
+  already were, instead of reporting a bare version with no indication which
+  of thirty mods it referred to.
+- **Removed the unreachable `overrideHint`.** `resolveURL` only ever sees
+  `mods/` entries, never overrides, so the override branch could never print;
+  the error no longer carries its `%s`.
 
 ## [0.1.0] - 2026-10-02
 

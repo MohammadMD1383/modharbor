@@ -1,7 +1,7 @@
 # Handoff — modharbor
 
-**Public at <https://github.com/MohammadMD1383/modharbor>.** 46 commits on
-`main`, pushed. All 10 packages pass; `gofmt`, `go vet` clean.
+**Public at <https://github.com/MohammadMD1383/modharbor>.** 51 commits on
+`main`, pushed. All 10 test packages pass; `gofmt`, `go vet` clean.
 
 Read this first, then `BACKLOG.md` for the queue and `tasks/T*.md` for briefs.
 

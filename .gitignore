@@ -9,6 +9,10 @@ coverage.out
 coverage.html
 profile.cgo
 
+# Project-local dev tools (staticcheck, etc). Installed with
+# GOBIN=$PWD/.tools/bin so nothing lands on the user's PATH.
+/.tools/
+
 # Local modharbor artifacts (jars and instances are never ignored)
 /.modharbor-backup/
 .modharbor-dl-*

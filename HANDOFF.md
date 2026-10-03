@@ -37,6 +37,7 @@ reason.
 
 | Path | Why |
 |---|---|
+| `QUEUE.md` | **Start here to pick up work.** Self-contained items, cold-pickable |
 | `BACKLOG.md` | Work queue, ordered, with status markers and evidence |
 | `tasks/T*.md` | Task briefs: scope, constraints, verification |
 | `docs/architecture.md` | Package map, identification chain, migration algorithm |
@@ -287,7 +288,7 @@ left work that built and passed tests while being wrong.
 | `internal/provider/curseforge` | 98.4% |
 | `internal/hashutil` | 96.6% |
 | `internal/version` | 100.0% |
-| `internal/config` | 91.6% |
+| `internal/config` | 89.8% |
 | `internal/resolver` | 85.0% |
 | `internal/store` | 82.6% |
 | `internal/mrpack` | 76.9% |
@@ -296,7 +297,10 @@ left work that built and passed tests while being wrong.
 | `internal/provider/modrinth` | 64.3% |
 | `internal/instance` | 60.3% |
 | `internal/ui` | 60.1% |
-| `internal/cli` | 55.8% |
+| `internal/cli` | 55.9% |
+
+`internal/config` reads 89.8% rather than the 91.6% first reported because B34
+added a `Stat`/`Chmod` branch pair; the branch is covered, the denominator grew.
 
 ---
 
@@ -478,6 +482,11 @@ in plain sight, because nobody has had a green build to notice it in.
 ---
 
 ## Suggested next steps, in order
+
+**`QUEUE.md` is the current, verified list** and supersedes the summary table
+below. The order there is deliberate: A1 (`.gitattributes`) is nearly free and
+unblocks three CI legs, A3 is a real bug already shipping to the live
+Modrinth API from macOS CI, then the rest.
 
 1. **Fix CI (B35).** Nothing else can be trusted until a run means something.
    Start with the missing `.gitattributes` (B35a) — it is nearly free and it

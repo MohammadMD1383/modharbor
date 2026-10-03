@@ -4,14 +4,20 @@
 published and all 11 expected assets landed. All 14 internal packages pass
 locally; `gofmt`, `go vet` clean.
 
-> **CI on `main` has never been green.** All 25 recorded runs failed, for three
-> unrelated reasons that predate the current work: a missing `.gitattributes`
-> makes `gofmt` fail on every Windows leg, the `lint` job reports 15 real
-> staticcheck/`unused` findings, and a broad set of `internal/cli` tests fail on
-> macOS. Do not read a red run as being about your change. See **CI is red on
-> `main`** below before opening a PR.
+> **CI on `main` has never been green.** All 25 recorded runs failed. Do not
+> read a red run as being about your change.
+>
+> The count of causes has changed. The missing `.gitattributes` is **fixed**
+> (`08ee195`, PR #3) — and fixing it revealed more: the Windows test step had
+> been **skipped on all 25 runs**, so the Windows suite had never executed once.
+> It now runs, and **48 tests across 5 packages fail**, including a
+> durability bug that makes `add`, `update`, `migrate` and `mrpack`
+> import/export fail outright on Windows. Two root causes: `syncDir` calls
+> `f.Sync()` on a directory handle (denied on Windows), and the test harness
+> writes config somewhere only Linux reads. See `QUEUE.md` **A6**.
 
-Read this first, then `BACKLOG.md` for the queue and `tasks/T*.md` for briefs.
+Read this first, then `QUEUE.md` for the queue and `BACKLOG.md` for the backlog.
+`AGENTS.md` holds the standing rules — start there if you have not.
 
 ---
 
@@ -37,7 +43,8 @@ reason.
 
 | Path | Why |
 |---|---|
-| `QUEUE.md` | **Start here to pick up work.** Self-contained items, cold-pickable |
+| `AGENTS.md` | **Start here.** The standing rules, auto-loaded every session |
+| `QUEUE.md` | **Then here to pick up work.** Self-contained items, cold-pickable |
 | `BACKLOG.md` | Work queue, ordered, with status markers and evidence |
 | `tasks/T*.md` | Task briefs: scope, constraints, verification |
 | `docs/architecture.md` | Package map, identification chain, migration algorithm |
@@ -310,12 +317,16 @@ Remaining, in rough priority order:
 
 | Item | What |
 |---|---|
-| **B35** | CI on `main` has never been green — three unrelated causes. Blocks every PR. See **CI is red on `main`**. |
+| **B35** | CI on `main` has never been green. Blocks every PR. The `.gitattributes` half is **fixed** (`08ee195`); unblocking the Windows suite then exposed 48 failures across 5 packages, incl. a shipped `syncDir` bug that breaks every atomic write on Windows. See **CI is red on `main`** and `QUEUE.md` A6. |
 | **B36** | `lint` reports 15 real staticcheck/`unused` findings. Blocks every PR. |
-| **B37** | `internal/cli` tests fail on macOS with genuinely wrong output. Blocks every PR. |
+| **B37** | `internal/cli` tests hit the **live Modrinth API** on macOS *and* Windows, because the harness writes config to a path only Linux reads. One bug, two platforms. Blocks every PR. See `QUEUE.md` A3/A6b. |
 | **B32** | `versionCorroborated` skips the size check for mc-first version decorations. Tightens the incident's own safety net, so it needs measuring against the real instance first — see the corroboration note above. |
 | **B9** | Content-addressed jar cache keyed by SHA-512, hard-linked into `mods/`. Makes repeated migrations near-instant. |
 | **B10** | `sync` a saved profile — `.modharbor/profile.toml` pinning exact versions, so an install is reproducible. |
+
+These numbers are **out of date** in one direction only: the table predates the
+A6 triage, which added the Windows failures above and closed B35a. `QUEUE.md`
+is the maintained list; this table is a summary of it.
 
 Since this was last written, B11 (duplicate warning on `scan`), B12
 (global `--loader`), B27 (fsync durability), B28 (unreachable
@@ -419,23 +430,26 @@ one of these had been sitting in the repo, passing locally.
 
 **All 25 recorded CI runs on `main` have failed.** This is the single most
 important thing to know before opening a PR, because a red run tells you
-nothing about your change. Three independent causes, all predating T10:
+nothing about your change.
 
-### B35a. `gofmt` fails on all three Windows legs
+**Read this next part.** In all 25 of those runs the Windows `Test` step was
+**skipped**, because the `gofmt` step above it always failed first. The Windows
+test suite had therefore never executed — so "no Windows failures" was never a
+green result, it was an *absent* result. `.gitattributes` is now fixed
+(`08ee195`), the step runs, and 48 tests across 5 packages fail. Full triage in
+`QUEUE.md` **A6**; the two root causes are:
 
-There is **no `.gitattributes`**. Windows runners check out with CRLF, so
-`gofmt -l internal/ cmd/` reports nearly *every* file as unformatted:
-
-```
-::error::run 'gofmt -w internal\cli\add.go'
-::error::run 'gofmt -w internal\app\app.go'
-   ... one per file
-```
-
-Nothing is actually misformatted — `gofmt -l` is clean locally. The fix is a
-`.gitattributes` with `*.go text eol=lf` (plus the other text types), then a
-one-off renormalisation. Trivial, and it is pure noise until done, because it
-masks real formatting failures on every Windows run.
+1. **`syncDir` returns `ERROR_ACCESS_DENIED` on Windows.** `f.Sync()` on a
+   directory handle is refused. There are four copies of the helper
+   (`store`, `migrate`, `cli`, `mrpack`), so *every* atomic-write path in the
+   tool is affected — `store.Save`, `add`, `update`, migration downloads, and
+   `mrpack` import/export. It runs *after* the rename succeeds, so on Windows
+   the write lands and the command then exits non-zero with `Access is
+   denied`; the store also never clears `s.dirty`. Shipped in `v0.1.0`.
+2. **`harness_test.go` writes config to `$XDG_CONFIG_HOME`,** which only Linux
+   reads; on darwin and Windows the CLI falls back to the **live Modrinth API**.
+   This is the same defect as the macOS problem below (B37), which is therefore
+   not a macOS bug — it is one bug on two platforms.
 
 ### B36. `lint` reports 15 real findings
 
@@ -484,23 +498,31 @@ in plain sight, because nobody has had a green build to notice it in.
 ## Suggested next steps, in order
 
 **`QUEUE.md` is the current, verified list** and supersedes the summary table
-below. The order there is deliberate: A1 (`.gitattributes`) is nearly free and
-unblocks three CI legs, A3 is a real bug already shipping to the live
-Modrinth API from macOS CI, then the rest.
+below. The order there is deliberate: A6a (`syncDir`) first, because it is a
+user-facing durability bug already shipped in `v0.1.0` and broken for every
+Windows user; then A3/A6b, one defect in one helper that sends CI to the live
+Modrinth API on two platforms; then the rest.
 
-1. **Fix CI (B35).** Nothing else can be trusted until a run means something.
-   Start with the missing `.gitattributes` (B35a) — it is nearly free and it
-   stops Windows reporting every file as misformatted. Then B37, the macOS
-   `internal/cli` failures, because they are real wrong-output bugs that have
-   been shipping unnoticed. Then B36's 15 lint findings, checking the unused
-   struct fields for forgotten wiring rather than deleting them blind.
+1. **A6a — `syncDir` on Windows.** The highest-value thing in the repo. Four
+   copies of a helper that cannot work on Windows, sitting on the
+   durability path of `store.Save`, `add`, `update`, migration downloads and
+   `mrpack` import/export. Every one of those fails on Windows today.
 
-2. **B10** (`sync`). The feature people actually want when they care about a
+2. **A3 + A6b together** — one bug, not two. The harness writes config to
+   `$XDG_CONFIG_HOME`, which only Linux honours, so macOS and Windows CI both
+   reach the live Modrinth API. This also violates this file's own rule: *"Use
+   `httptest.NewServer` for the API, never live Modrinth."* Assert the fake
+   server records **zero** non-fixture requests, so it cannot silently regress.
+
+3. **B36** — the 15 lint findings, checking the unused struct fields for
+   forgotten wiring rather than deleting them blind.
+
+4. **B10** (`sync`). The feature people actually want when they care about a
    specific modpack configuration.
 
-3. **B9** (blob cache). B10 first — a profile makes the cache's value obvious.
+5. **B9** (blob cache). B10 first — a profile makes the cache's value obvious.
 
-4. **B32**, once there is a green build to measure against.
+6. **B32**, once there is a green build to measure against.
 
 ### Verify before you finish
 
@@ -518,8 +540,20 @@ CI runs `go test -race` on ubuntu/macos/windows across Go 1.23, 1.24 and stable.
 
 ## Known rough edges
 
-- **CI has never been green.** See B35. Every run has failed, for three
-  unrelated reasons, so no run has ever been evidence about a change.
+- **`syncDir` is broken on Windows.** `f.Sync()` on a directory handle returns
+  `ERROR_ACCESS_DENIED`, and four copies of that helper guard every atomic write
+  in the tool — so `store.Save`, `add`, `update`, migration downloads and
+  `mrpack` import/export all exit non-zero on Windows *after* doing the work.
+  Shipped in `v0.1.0`, never exercised. See `QUEUE.md` A6a. **Fix this next.**
+- **The Windows test suite had never run.** All 25 recorded CI runs skipped the
+  Windows `Test` step behind a failing `gofmt` step, so nothing about Windows
+  was ever verified — a gap that looked identical to a pass. Now fixed and
+  failing: 48 tests, 5 packages.
+- **CI has still never been green.** See B35. Every run has failed, so no run
+  has ever been evidence about a change.
+- **macOS and Windows CI reach the live Modrinth API.** The test harness writes
+  its config to `$XDG_CONFIG_HOME`, which `os.UserConfigDir()` only honours on
+  Linux. See `QUEUE.md` A3/A6b.
 - The release workflow does not wait on CI, which is how `v0.1.0` shipped from
   a red `main`. Worth fixing before `v0.2.0`.
 - The CurseForge file cache has no singleflight, so concurrent misses for one
@@ -529,3 +563,21 @@ CI runs `go test -race` on ubuntu/macos/windows across Go 1.23, 1.24 and stable.
   works without it.
 - `internal/ui` has dead exported surface: `Section`, `KV` and `Count` have no
   callers, and `asciiSymbols` backs a `--ascii` mode that does not exist.
+- **Every coverage figure in this file is Linux-only.** Nothing has been
+  measured on Windows, and the macOS legs fail.
+
+---
+
+## Open questions
+
+Things nobody has established. Not work items — gaps in what we know.
+
+- **Does anything actually work on Windows?** Until A6a's suite is green, the
+  answer is *no* for every atomic write. The Windows binaries in `v0.1.0` have
+  never been run against anything but a test that never executed.
+- **How far does the live-API leak reach?** A3/A6b is established for
+  `internal/cli` on macOS and Windows. Nobody has checked whether the `migrate`,
+  `config`, `mrpack` or `store` suites also escape to the network, or whether
+  any test has been silently asserting against real Modrinth responses.
+- **Was `v0.1.0` ever exercised by its author on Windows?** Unknown. The release
+  notes describe one real migration on macOS.

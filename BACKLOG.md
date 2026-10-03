@@ -382,14 +382,32 @@ surfaces. `internal/cli` 46.0% → 55.8%; `rollback.go` is at 78.8% overall and
 
 ### [ ] B35. CI on `main` has never been green
 All 25 recorded runs failed. Until this is fixed, a red run says nothing about
-a change, and there is no build to catch anything. Three independent causes.
+a change, and there is no build to catch anything.
 
-**B35a — `gofmt` fails on all three Windows legs.** There is no
-`.gitattributes`, so Windows runners check out CRLF and `gofmt -l internal/
-cmd/` reports nearly every file as unformatted. Nothing is actually
-misformatted; the check is meaningless on Windows and hides real failures. Fix:
-`.gitattributes` with `*.go text eol=lf` plus the other text types, then a
-one-off renormalisation.
+**B35a — `gofmt` failed on all three Windows legs. FIXED** in `08ee195`
+(PR #3): `.gitattributes` with `eol=lf` for text types. `git add --renormalize .`
+was a no-op, so every tracked blob was already LF and this only governs checkout.
+
+**B35b — the Windows test suite had never run. OPEN.** This is what B35a was
+hiding. In all 25 runs the Windows `Test` step was *skipped* because the `gofmt`
+step above it always failed first, so nothing about Windows was ever verified —
+an absent result that reads exactly like a pass. With B35a fixed the suite runs
+and **48 tests across 5 packages fail** (`cli`, `config`, `migrate`, `mrpack`,
+`store`; run `37124939113`). 46 of the failures are `Access is denied` from
+`syncDir`, 12 are `invalid character '▲'` in JSON output. Pre-existing, not
+regressions. Full triage in `QUEUE.md` A6; the two root causes are:
+
+- **`syncDir` calls `f.Sync()` on a directory handle, which Windows refuses**
+  (`ERROR_ACCESS_DENIED`). Four copies — `store/store.go:347`,
+  `migrate/sync.go:9`, `cli/sync.go:9`, `mrpack/sync.go:10` — so *every*
+  atomic-write path is affected: `store.Save`, `add`, `update`, migration
+  downloads, `mrpack` import/export. It runs *after* the rename succeeds, so on
+  Windows the write lands and the command then exits non-zero reporting
+  `Access is denied`; `store.Save` also never clears `s.dirty`. Shipped in
+  `v0.1.0`. **This is the highest-value open defect in the repo.**
+- **The test harness writes config to `$XDG_CONFIG_HOME`**, which
+  `os.UserConfigDir()` honours only on Linux, so the config is never found and
+  the CLI falls back to the live Modrinth API. Same defect as B37 below.
 
 **B36 — `lint` reports 15 real findings.** The linter itself was fixed (it
 never used to start), and now the code does not pass it:
@@ -407,9 +425,10 @@ The unused struct fields deserve a look rather than a blind delete: an unused
 `dryRun` on `outdated` may be a flag that was wired up and then forgotten, which
 is the same class of defect as B2's decorative `--dry-run`.
 
-**B37 — `internal/cli` tests fail on macOS with wrong output.** Not a flake, and
-not the same thing as the timeouts below: Ubuntu passes, all three macOS Go
-versions fail identically, so it is deterministic and diagnosable.
+**B37 — `internal/cli` tests reach the live Modrinth API on macOS *and*
+Windows.** Not a flake, and not the same thing as the timeouts below: Ubuntu
+passes, and every macOS and Windows Go version fails identically, so it is
+deterministic.
 
 ```
 commands_test.go:147: identified = 2, want 1
@@ -419,17 +438,40 @@ add_update_test.go:59:  a real run downloaded nothing
 hints_test.go:194:      list --json with a configured default: exit 1
 ```
 
-Worth noting what this means: `method = "name", want hash` is the resolver
-falling back off exact identification, and `identified = 2, want 1` is the
-opposite error. A real bug has been shipping in plain sight because no build has
-ever been green to notice it in. Plausibly a case-insensitive filesystem
-assumption, a path-separator comparison, or an `httptest`/DNS difference — but
-that is a guess, and it should be reproduced on a macOS runner before anyone
-changes code on the strength of it.
+**Root cause — established, not guessed.** `internal/cli/harness_test.go:463-466`
+sets only `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and
+`MODHARBOR_MINECRAFT_DIR`. But `config.DefaultPaths()` resolves `ConfigDir` via
+`os.UserConfigDir()`, which honours `XDG_CONFIG_HOME` **only on Linux** — on
+darwin it returns `$HOME/Library/Application Support`, on Windows `%AppData%`.
+`HOME`/`USERPROFILE`/`AppData` are never set. The config is therefore written
+where the code will never look, `BaseURL` falls back to
+`https://api.modrinth.com/v2`, and **CI makes real requests to Modrinth** on two
+platforms. Every symptom follows: fixture hash lookups 404 against the real API,
+real search matches what the fixture says is unknown, and the version reported
+(`mc26.3-0.9.3-alpha.1-fabric`) is a *real* Sodium build that appears in no CLI
+fixture.
+
+**This also violates `HANDOFF.md`'s own rule:** *"Use `httptest.NewServer` for
+the API, never live Modrinth."*
+
+> **Superseded guess, removed.** This entry previously speculated that the cause
+> was "a case-insensitive filesystem assumption, a path-separator comparison, or
+> an `httptest`/DNS difference". None of those is it. Do not re-derive them.
+
+The 12 `invalid character '▲'` JSON failures on Windows are a *symptom* of this,
+not a separate encoding defect: `▲` is `ui.SymWarn` (`internal/ui/ui.go:51`), so
+a warning line lands on stdout and corrupts the `--json` payload once the config
+lookup fails and the live API answers differently.
+
+Fix sketch: also set `HOME`/`USERPROFILE` to the temp home, write config to the
+platform-correct location from `os.UserConfigDir()`, or thread the existing
+`--config` persistent flag (`root.go:140`). Assert the fake server records
+**zero** non-fixture requests — a silent return to live traffic is exactly the
+failure being fixed. Do B37 and `QUEUE.md` A6b together; they are one bug.
 
 Separately `watch_test.go` has four real timeouts on macOS (`timed out waiting
 for the first cycle`, `timed out waiting for polling to resume`); those *are*
-timing-sensitive, and the `Test` step runs 54s.
+timing-sensitive, and the `Test` step runs 54s. They also fail on Windows.
 
 Also worth fixing while in here: `release.yml` does not wait on CI, which is how
 `v0.1.0` published from a red `main`. Nothing stops a broken tree shipping a

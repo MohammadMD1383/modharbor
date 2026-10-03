@@ -5,6 +5,12 @@ self-contained: you should not need to read `HANDOFF.md` or `BACKLOG.md` first.
 
 **Rules that apply to every item:**
 
+- **Anything you find but do not fix goes in this file.** This queue is the
+  cold-pickable inventory, so an undocumented loose end is a lost one. Add the
+  item *with its evidence* — the failing command, the log line, the count —
+  even if it is unrelated to your change and even if you are sure someone
+  already knows. The same applies to questions you could not answer and work
+  you deliberately skipped. `AGENTS.md` states this rule in full.
 - Branch from current `main`, name the branch for the *change* (not the first
   commit — that mistake cost `test/version-coverage` its name).
 - Verify with `gofmt -l internal/ cmd/`, `go build ./...`, `go vet ./...`,
@@ -14,6 +20,9 @@ self-contained: you should not need to read `HANDOFF.md` or `BACKLOG.md` first.
   the evidence in the message.
 - Tests that only characterise existing code have no red phase. Break the
   expected value and confirm a named test notices.
+- Do not take a subagent's report at face value. Reproduce its claims yourself
+  — one report in this repo's history got a root cause right and the
+  explanation wrong.
 - **The real Minecraft instances are off limits.** `~/.minecraft/versions/{26.2,26.3}-fabric-mod`
   — do not read, list, `cd` into, or run modharbor against them. Prove
   isolation with `unshare -rm` + bind-masking, not by inspecting them.
@@ -21,14 +30,27 @@ self-contained: you should not need to read `HANDOFF.md` or `BACKLOG.md` first.
 
 ---
 
-## A. CI is red — nothing else can be trusted until A1–A3 are green
+## A. CI is red — nothing else can be trusted until these are green
 
-**`main` has never had a green build.** All 25 recorded runs failed. Four
-independent causes, none of them a flake.
+**`main` has never had a green build.** All 25 recorded runs failed. The causes
+are independent and none of them a flake.
 
-### A1. `.gitattributes` is missing → Windows `gofmt` fails on all 3 legs
+**A1 is done** (commit `08ee195`, PR #3), which changed the shape of this
+section: fixing it let the Windows test suite run for the first time in this
+repo's history, and it immediately failed **48 tests across 5 packages**. Those
+are pre-existing defects that were invisible, not regressions. See **A6**.
 
-**Cheapest item in this file. Do it first.**
+### A1. ~~`.gitattributes` is missing → Windows `gofmt` fails on all 3 legs~~ — DONE
+
+Fixed in `08ee195` (PR #3). `.gitattributes` added with `eol=lf` for text types.
+The `gofmt` step on all three Windows legs now passes; `git add --renormalize .`
+was a no-op, so every tracked blob was already LF and this only governs
+checkout. Kept here because its *consequence* is A6, not because it is open.
+
+**Do not read A1's fix as "CI is fixed".** It repaired a check that was
+reporting every file as misformatted, which had made that check unable to catch
+a real formatting failure on Windows — and had been masking the entire Windows
+test suite behind a `gofmt` failure.
 
 Windows runners check out with CRLF, so `gofmt -l internal/ cmd/` reports
 **every single `.go` file** as unformatted:
@@ -99,9 +121,14 @@ puts a binary on the user's `PATH`, outside the project. Note the pinned
 `2025.1.1` cannot read Go 1.27 export data ("export data version 4 is greater
 than maximum supported version 2"), so use `@latest`.
 
-### A3. macOS `internal/cli` tests hit the LIVE Modrinth API — root cause found
+### A3. `internal/cli` tests hit the LIVE Modrinth API on macOS **and** Windows
 
 **Highest-value item here. A real bug, already shipping.**
+
+> **Scope correction (from the A6 triage):** this item was written as a macOS
+> problem. It is not — the cause is platform-independent, and Windows is
+> affected identically, plus 4 more packages beyond `internal/cli`. It is one
+> defect in one helper. Treat A3 and **A6b** as a single item.
 
 On macOS, ~10 `internal/cli` tests fail with genuinely wrong values:
 
@@ -191,6 +218,117 @@ runner — lengthen the deadline rather than deleting the assertion.
 depends on the test matrix, so a broken tree can ship a binary. Gate the
 release on the test job before cutting `v0.2.0`. (Also note `v0.1.0` now
 exists and is public — never force-move a shipped tag. See `HANDOFF.md`.)
+
+### A6. The Windows test suite has never run — 48 failures, two root causes
+
+**This is the highest-value item in this file.** Not because it is the most
+work, but because one of its two causes is a user-facing durability bug that
+**shipped in `v0.1.0`** and has never been exercised on Windows at all.
+
+**How it was found.** Every one of the 25 recorded CI runs showed `gofmt ->
+failure` and `Test -> skipped` on all three `windows-latest` legs — the test
+step never executed on Windows, not once. So "no Windows failures" was never a
+green result; it was an absent result. A1 fixed the `gofmt` step, and the
+Windows suite immediately failed:
+
+| | |
+|---|---|
+| Distinct failing tests | **48** |
+| Packages | **5** — `cli`, `config`, `migrate`, `mrpack`, `store` |
+| Failures mentioning `Access is denied` | **46** |
+| Failures mentioning `invalid character` | **12** |
+
+Source: run `37124939113`, job `test (windows-latest, go stable)`. Linux passes.
+macOS is affected by A6b but **not** by A6a — directory `Sync` works on darwin,
+which is why the `Access is denied` failures are Windows-only.
+
+These are **pre-existing defects that were hidden, not regressions** — A1's diff
+adds one file and a changelog entry.
+
+#### A6a. `syncDir` cannot work on Windows — user-facing, shipped in v0.1.0
+
+`f.Sync()` on a *directory* handle returns `ERROR_ACCESS_DENIED` on Windows.
+There are **four separate copies** of this helper, and every atomic-write path
+in the tool calls one of them:
+
+| Location | Path it guards |
+|---|---|
+| `internal/store/store.go:347` | `store.Save` — state.json durability |
+| `internal/migrate/sync.go:9` | migration downloads |
+| `internal/cli/sync.go:9` | `cli` download / `add` / `update` |
+| `internal/mrpack/sync.go:10` | `mrpack` install **and** export |
+
+So every durability-guarded write in modharbor fails on Windows:
+
+```
+add: downloading Sodium: sync C:\...\Temp\...\26.3-fabric-mod\mods: Access is denied.
+update --all: sync C:\...\mods: Access is denied.
+fetchFile: sync C:\...\Temp\...\001: Access is denied.
+export: staging sodium-0.10.0.jar: sync C:\...\modharbor-overrides-...\mods: Access is denied.
+```
+
+**This is not cosmetic, but be precise about the symptom.** `syncDir` exists so
+a crash after `os.Rename` cannot leave an entry missing (see the comment at
+`store.go:344`). It is called *after* the rename has already succeeded
+(`cli/download.go:169` renames, `:172` syncs the directory). So on Windows **the
+write lands and then the command reports failure** — it is not data loss:
+
+- the jar is installed, the state file is written, the `.mrpack` is exported;
+- the command then exits non-zero with `Access is denied`;
+- `store.Save` never reaches `s.dirty = false`, so the store stays dirty.
+
+That is arguably worse than a clean failure, because the tool reports an error
+for work it actually completed, and any caller that retries on a non-zero exit
+does the work twice. The tests caught it because they assert on the returned
+error; `Access is denied` mid-download is what a user sees.
+
+**Fix sketch.** Treat a directory-sync failure as best-effort on Windows rather
+than fatal — the correct behaviour is to ignore `ERROR_ACCESS_DENIED` (and
+`EINVAL`, which some filesystems return for the same call) and keep the file
+sync that already succeeded, since the rename is still ordered by the OS. The
+four copies should be consolidated into one shared helper as part of this, so
+the next platform quirk is fixed once. **Do not** simply delete the calls: on
+Linux they are load-bearing.
+
+#### A6b. `harness_test.go` writes config to a path only Linux reads
+
+**Same root cause as A3, and A3 is not a macOS problem.** It is
+platform-independent, and Windows is simply worse off. `writeTestConfig`
+(`internal/cli/harness_test.go:463-466`) sets only:
+
+```go
+t.Setenv("XDG_CONFIG_HOME", ...)   // + XDG_DATA_HOME, XDG_CACHE_HOME
+t.Setenv("MODHARBOR_MINECRAFT_DIR", ...)
+```
+
+but `config.DefaultPaths()` resolves `ConfigDir` through `os.UserConfigDir()`,
+which honours `XDG_CONFIG_HOME` **only on Linux** — on darwin it returns
+`$HOME/Library/Application Support`, and on Windows `%AppData%`. `HOME`,
+`USERPROFILE` and `AppData` are never set. So the config is written to a
+directory the code will never look in, `BaseURL` silently falls back to
+`config.Default()`'s `https://api.modrinth.com/v2`, and **the test suite makes
+real network calls to Modrinth from CI on both macOS and Windows.**
+
+That also explains the 12 `invalid character` JSON failures, which are **not** a
+BOM and are **not** an encoding problem — the offending byte is `▲`:
+
+```
+add --json is not valid JSON: invalid character '▲' looking for beginning of value
+```
+
+`▲` is `ui.SymWarn` (`internal/ui/ui.go:51`). The config is not found, the
+request goes to the live API, resolution behaves differently, modharbor emits a
+**warning line on stdout**, and the warning corrupts the `--json` payload. So
+those 12 failures are a *downstream symptom* of A6b, not a separate defect.
+
+**Fix sketch is in A3** and applies here unchanged — set `HOME`/`USERPROFILE` to
+the temp home as well, write the config to the platform-correct location derived
+from `os.UserConfigDir()`, or thread the existing `--config` persistent flag
+(`root.go:140`). Add an assertion that the fake server records **zero**
+non-fixture requests: a silent return to live traffic is the failure being
+fixed, and this is the second time it has been invisible.
+
+**Do A6b and A3 together, not separately.** They are one defect in one helper.
 
 ---
 
@@ -343,18 +481,26 @@ the reason `ui` sits at 60%.
 **Reminder:** covering a 0% package is how T10 found ten real bugs, including
 the security fix in B34. A package at 0% is unexamined code, not merely
 untested code. This is a productive way to pick work — but it does not
-displace A1–A3, which gate everything.
+displace A6, which is a shipped user-facing bug on Windows.
+
+**D4. This table is Linux-only.** Every figure was measured on Linux, and
+`HANDOFF.md` records that the macOS legs fail. Nothing here has ever been
+measured on Windows, because the Windows suite had never executed (A6). Do not
+read a coverage number as a statement about any platform but Linux.
 
 ---
 
 ## Verified-clean (do not re-investigate)
 
 - **No `TODO`/`FIXME`/`XXX`/`HACK`** anywhere in non-test Go code.
-- `go vet ./...` and `gofmt -l` are clean on Linux.
+- `go vet ./...` and `gofmt -l` are clean **on Linux**.
+- CurseForge is ~98% covered but has never run against the live API (no key) —
+  so treat that coverage as untested-in-anger.
 - `internal/config` correctly enforces `0600` on an existing config (B34).
 - `update --dry-run` is functional — it returns before applying
   (`update.go:114-119`). Not a repeat of the B2 decorative-flag bug.
 - `README.md`'s documented flags all exist (`--force`, `--all`, `--known`,
   `--offline`, `--verbose`, `--json`, `--no-color`, `--quiet` all registered).
-- CurseForge is ~98% covered but has never run against the live API (no key) —
-  so treat that coverage as untested-in-anger.
+
+**"Verified-clean" means verified on Linux, from a Linux working tree.** It is
+not a claim about macOS or Windows.

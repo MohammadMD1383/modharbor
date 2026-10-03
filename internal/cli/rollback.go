@@ -110,7 +110,7 @@ in the new snapshot rather than deleted.
 			}
 
 			if len(snaps) == 0 {
-				return renderNoSnapshots(inst, modsDir, backupRoot)
+				return renderNoSnapshots(inst, modsDir, backupRoot, list)
 			}
 
 			if list {
@@ -218,8 +218,9 @@ func loadSnapshots(backupRoot string) ([]snapshot, error) {
 		if !e.IsDir() || isNonRestorableBucket(e.Name()) {
 			continue
 		}
-		if _, err := time.Parse(rollbackLayout, e.Name()); err != nil {
-			// Anything not stamped by backupReplacements is a bucket.
+		if !isRestorePoint(e.Name()) {
+			// Anything not stamped by backupReplacements or nextStamp is a
+			// bucket, or junk somebody dropped here.
 			continue
 		}
 		files, err := instance.ModFiles(filepath.Join(backupRoot, e.Name()))
@@ -261,6 +262,34 @@ func isNonRestorableBucket(name string) bool {
 	default:
 		return false
 	}
+}
+
+// isRestorePoint reports whether a directory name is a stamped restore point.
+//
+// nextStamp disambiguates a collision by appending "-NNN" to the stamp, so the
+// suffix has to come off before the layout will parse. Reading the name with a
+// bare time.Parse is what made a rollback's own archive unrestorable: the
+// command promises the restore is undoable, and a directory it wrote itself was
+// invisible to --list.
+//
+// The suffix sits after the trailing Z, which is what keeps the reverse string
+// compare in loadSnapshots chronological — "-001" is a greater name, so a later
+// snapshot still sorts first.
+func isRestorePoint(name string) bool {
+	if _, err := time.Parse(rollbackLayout, name); err == nil {
+		return true
+	}
+	_, suffix, found := strings.Cut(name, "-")
+	if !found || suffix == "" {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	_, err := time.Parse(rollbackLayout, strings.TrimSuffix(name, "-"+suffix))
+	return err == nil
 }
 
 // pickSnapshot chooses the snapshot to restore, honouring --to.
@@ -345,6 +374,10 @@ func applyRollback(modsDir string, s snapshot, plan rollbackPlan) (int, error) {
 
 // nextStamp produces a snapshot name that does not collide with an existing
 // one, which matters when a rollback follows an update inside the same second.
+//
+// The suffix has to stay loadable: whatever this returns, loadSnapshots must
+// list and pickSnapshot must accept, or the archive a rollback writes is the
+// one thing that cannot be rolled back.
 func nextStamp(modsDir string, now time.Time) string {
 	root := filepath.Join(modsDir, backupDirName)
 	stamp := now.UTC().Format(rollbackLayout)
@@ -410,9 +443,21 @@ func rollbackResult(inst *instance.Info, modsDir, backupRoot string, s snapshot,
 
 // renderNoSnapshots explains that there is nothing to restore, and names the
 // directory that was searched so the user can check their assumption.
-func renderNoSnapshots(inst *instance.Info, modsDir, backupRoot string) error {
+//
+// asList is how this was reached. `rollback --list --json` and
+// `rollback --json` both land here when the backup root is empty, and they do
+// not report the same thing: one lists snapshots, the other reports a run. The
+// list form has to keep its own shape, or a consumer iterating .snapshots finds
+// a number here and an array there.
+func renderNoSnapshots(inst *instance.Info, modsDir, backupRoot string, asList bool) error {
 	removed := countBucket(backupRoot, removedBucket)
 	if flagJSON {
+		if asList {
+			return printJSON(map[string]any{
+				"instance": inst.ID, "modsDir": modsDir,
+				"backupDir": backupRoot, "snapshots": snapshotRows(nil),
+			})
+		}
 		return printJSON(rollbackJSON{
 			Instance: inst.ID, ModsDir: modsDir, BackupDir: backupRoot,
 			RemovedFiles: removed,
@@ -462,7 +507,11 @@ func renderSnapshotList(inst *instance.Info, backupRoot string, snaps []snapshot
 	}
 	tab.Render()
 
-	ui.Success("%s, %s", plural(len(snaps), "snapshot", "snapshots"), ui.HumanBytes(snapshotBytes(snaps)))
+	// plural returns the word, not the phrase, so the count has to be
+	// interpolated here. Printing the word alone made this line read
+	// "snapshots, 58 B" and never say how many.
+	ui.Success("%d %s, %s", len(snaps), plural(len(snaps), "snapshot", "snapshots"),
+		ui.HumanBytes(snapshotBytes(snaps)))
 	ui.Hint("restore the newest with `modharbor rollback %s`", inst.ID)
 	if removed := countBucket(backupRoot, removedBucket); removed > 0 {
 		ui.Note("%d jar(s) in %s are set aside by `remove --keep-files` and cannot be rolled back",

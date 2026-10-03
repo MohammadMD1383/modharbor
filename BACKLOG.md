@@ -279,6 +279,39 @@ available`. Pinned by an assertion in
 Was `curseforge: 503 ` for a 5xx with an empty body. Done in T9: the message
 names the URL it failed against.
 
+### [x] B31. `versionPlausible` rejects every mc-first version decoration
+Was: a CurseForge-mirror jar declares the bare mod version (`3.7.1`) while
+Modrinth publishes the same build with the game version in front
+(`mc26.2-3.7.1`) — a very common Modrinth convention. The containment name match
+scores below `confSlug`, so `versionPlausible` was the gate, and it compared
+against `numericCore`, which returns the *leading* dotted run. For an mc-first
+number that is the Minecraft release, not the mod's version, so the gate always
+said no and the mod was reported unmatched. Its own doc comment said
+"containment rather than equality is the right test"; the code never did that.
+
+Fixed: `versionPlausible` now tests containment in both directions and keeps
+the numeric-core fallback. `versionCorroborated` and `sizeTolerance` are
+untouched and `collide_test.go` still passes. Pinned by
+`TestNameMatchSurvivesAnMCFirstVersionNumber` and the `TestVersionPlausible`
+table — reverting the fix fails three tests.
+
+### [ ] B32. `versionCorroborated` skips the size check for mc-first decorations
+The other half of B31, deliberately left alone. `versionCorroborated` selects
+the versions it size-checks with the same `numericCore`, so for an
+mc-first-decorated project it finds no matching version, `sameCore` comes back
+empty and the function allows the match through unchecked. In other words the
+corroboration that B31 strengthened is skipped precisely for the decoration B31
+was about: a private `More Tools 1.0.0` would sail past the published
+`mc1.20.1-1.0.0` of a stranger's 8.9 MB project.
+
+Why it was not changed in the same commit: this one *tightens* the safety net
+rather than loosening it, and `collide_test.go` encodes the incident as the
+specification. Widening `sameCore` to containment means every legitimate mirror
+jar whose repackaged size differs by more than 2× starts being rejected — a
+different trade against a different failure mode, and one that needs measuring
+against the author's real 33-mod instance rather than a fixture. The loader veto
+and the exact-hash path are unaffected either way.
+
 ---
 
 ## Known limitation, now fixed
@@ -314,6 +347,123 @@ project and the digests verified after download. That answers "why did
 modharbor think that was X?", and the data already existed on `ScannedMod`.
 Unmatched jars are reported too, since that is what answers "why is this
 folder empty?"
+
+### [x] B33. `rollback` had no tests, and its archive could not be rolled back
+`internal/cli/rollback.go` is the whole recovery story — every jar modharbor
+replaces is first moved into `mods/.modharbor-backup/<stamp>/` — and none of it
+was tested. Seventeen functions sat at 0%.
+
+Writing the tests found three defects, all on that path:
+
+- **`nextStamp` and `loadSnapshots` disagreed about what a snapshot is named.**
+  `nextStamp` disambiguates a same-second collision with a `-NNN` suffix;
+  `loadSnapshots` gated on a bare `time.Parse(rollbackLayout, name)`, which
+  rejects a suffix. The archive a rollback writes was therefore invisible to
+  `--list` and unreachable by `--to` — in exactly the case `nextStamp`'s own
+  comment describes, a rollback following an update inside the same second.
+  Fixed by `isRestorePoint`, which strips an optional numeric suffix first. The
+  suffix deliberately stays *after* the layout's trailing `Z`, since the sort is
+  a reverse string compare and `-001` must read as newer than the bare stamp.
+- **`rollback --list --json` changed the type of `.snapshots`.** An array when
+  there is something to show, a *count* when there is not, because the empty
+  case fell through to `renderNoSnapshots`'s `rollbackJSON`. A consumer
+  iterating `.snapshots[]` failed on exactly the instances with nothing to
+  restore. The list form now keeps its own shape.
+- **`rollback --list` never printed the count.** `plural()` returns the word,
+  not the phrase, and the summary interpolated it alone: `snapshots, 58 B`.
+
+`internal/cli/rollback_test.go` covers the snapshot layer end to end — the
+write-then-list round trip, `nextStamp` collision handling including its
+documented give-up fallback, the bucket exclusion, newest-first ordering, the
+restore/overwrite/archive split, `moveFile`'s no-partial-file guarantee, and
+the command's own `--list`, `--to`, `--dry-run`, `--json` and `--quiet`
+surfaces. `internal/cli` 46.0% → 55.8%; `rollback.go` is at 78.8% overall and
+100% per function except the two filesystem-failure branches.
+
+### [ ] B35. CI on `main` has never been green
+All 25 recorded runs failed. Until this is fixed, a red run says nothing about
+a change, and there is no build to catch anything. Three independent causes.
+
+**B35a — `gofmt` fails on all three Windows legs.** There is no
+`.gitattributes`, so Windows runners check out CRLF and `gofmt -l internal/
+cmd/` reports nearly every file as unformatted. Nothing is actually
+misformatted; the check is meaningless on Windows and hides real failures. Fix:
+`.gitattributes` with `*.go text eol=lf` plus the other text types, then a
+one-off renormalisation.
+
+**B36 — `lint` reports 15 real findings.** The linter itself was fixed (it
+never used to start), and now the code does not pass it:
+
+- `internal/cli/update.go:153` — `SA4006: this value of plan is never used`. A
+  computed plan discarded; possibly a real bug.
+- `internal/cli/version.go:56` — `SA1019: cobra.ExactValidArgs is deprecated`.
+- `internal/ui/table.go:39,45,51` — `S1023` redundant returns.
+- `internal/modmeta/modmeta.go:519` — `QF1002` could use a tagged switch.
+- `internal/mrpack/install_test.go:1070` `S1039`, `mrpack_test.go:347` `S1021`.
+- Unused: `outdated.go`'s `dryRun`/`yes`/`backup` fields, `ui/progress.go`'s
+  `final`, `resolve.go`'s `cacheTTL`, `curseforge_test.go`'s `cfRightVersions`.
+
+The unused struct fields deserve a look rather than a blind delete: an unused
+`dryRun` on `outdated` may be a flag that was wired up and then forgotten, which
+is the same class of defect as B2's decorative `--dry-run`.
+
+**B37 — `internal/cli` tests fail on macOS with wrong output.** Not a flake, and
+not the same thing as the timeouts below: Ubuntu passes, all three macOS Go
+versions fail identically, so it is deterministic and diagnosable.
+
+```
+commands_test.go:147: identified = 2, want 1
+commands_test.go:189: sodium-0.10.0.jar method = "name", want hash
+commands_test.go:179: unknownmod-1.0.jar method = "slug", want unmatched
+add_update_test.go:59:  a real run downloaded nothing
+hints_test.go:194:      list --json with a configured default: exit 1
+```
+
+Worth noting what this means: `method = "name", want hash` is the resolver
+falling back off exact identification, and `identified = 2, want 1` is the
+opposite error. A real bug has been shipping in plain sight because no build has
+ever been green to notice it in. Plausibly a case-insensitive filesystem
+assumption, a path-separator comparison, or an `httptest`/DNS difference — but
+that is a guess, and it should be reproduced on a macOS runner before anyone
+changes code on the strength of it.
+
+Separately `watch_test.go` has four real timeouts on macOS (`timed out waiting
+for the first cycle`, `timed out waiting for polling to resume`); those *are*
+timing-sensitive, and the `Test` step runs 54s.
+
+Also worth fixing while in here: `release.yml` does not wait on CI, which is how
+`v0.1.0` published from a red `main`. Nothing stops a broken tree shipping a
+binary. Gate the release on the test matrix before `v0.2.0`.
+
+---
+
+### [x] B34. `config.Save` left a pre-existing world-readable config alone
+`SECURITY.md` promises `config.json` is written `0600` "because the document can
+hold a CurseForge or Modrinth API key. Do not relax this, and please report it if
+the file is ever created world-readable." The code did not keep that promise:
+`os.WriteFile` applies its perm only when it *creates* the file, so any config
+that already existed kept whatever mode it had. A `0644` config — hand-created,
+restored from a backup, copied off another machine, or written by an older build —
+stayed `0644`, and the next `modharbor config set curseforge.apiKey …` wrote a
+credential into a world-readable file.
+
+Fixed: `Save` now tightens the mode *before* writing, so there is no window in
+which the key is briefly readable, rather than chmod-ing afterwards.
+
+The same function had a second defect, found by the same tests: it created
+`Paths.ConfigDir`, but `Load` sets `Paths.ConfigFile` to the `--config` argument
+while leaving `ConfigDir` at its XDG default. `--config /somewhere/else/my.json`
+therefore failed with `no such file or directory` unless that directory already
+existed. `Save` now creates the parent of the file it actually writes.
+`configSave` in `internal/cli/cache.go` repeated the same `MkdirAll(ConfigDir)`,
+which is now redundant and removed — it was additionally creating a spurious
+XDG config directory whenever `--config` pointed elsewhere.
+
+Both tests fail on the old code and pass on the new: reverting the chmod fails
+`TestSaveTightensAnExistingWorldReadableConfig` (mode stays `-rw-r--r--`), and
+restoring `MkdirAll(ConfigDir)` fails
+`TestSaveCreatesTheParentOfAnExplicitConfigPath`. `SECURITY.md`'s claim is now
+enforced rather than merely intended.
 
 ---
 

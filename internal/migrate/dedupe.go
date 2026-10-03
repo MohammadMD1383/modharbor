@@ -2,7 +2,6 @@ package migrate
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -24,7 +23,7 @@ func dedupeByProject(results []Result) []Result {
 	}
 
 	var drop = map[int]Result{}
-	for key, idx := range groups {
+	for _, idx := range groups {
 		if len(idx) < 2 {
 			continue
 		}
@@ -42,7 +41,6 @@ func dedupeByProject(results []Result) []Result {
 			}
 			drop[i] = r
 		}
-		_ = key
 	}
 
 	if len(drop) == 0 {
@@ -62,9 +60,11 @@ func dedupeByProject(results []Result) []Result {
 
 // pickWinner chooses which of several same-project results survives.
 //
-// Preference order:
+// Preference order (see compareFreshness):
 //  1. the newest source version, since that is what the user last installed
-//  2. the most recently modified file, as a tie-break for identical versions
+//  2. the longer destination file name, which usually reflects the more
+//     complete build
+//  3. the source file name, purely so the choice is stable
 func pickWinner(results []Result, idx []int) int {
 	best := idx[0]
 	for _, i := range idx[1:] {
@@ -180,12 +180,13 @@ func atoiOrZero(s string) int {
 }
 
 // dedupeKey identifies the grouping unit for de-duplication.
+//
+// An identified mod groups by its upstream project, so two builds of the same
+// project collapse. Anything else groups by source file name, which means two
+// distinct private jars are never mistaken for one copy of a single mod.
 func dedupeKey(r Result) string {
 	if r.ProjectID != "" {
 		return "project:" + r.ProjectID
-	}
-	if r.Action == ActionCopy {
-		return "file:" + r.SourceFile
 	}
 	return "file:" + r.SourceFile
 }
@@ -203,5 +204,3 @@ func orUnknown(s string) string {
 	}
 	return s
 }
-
-var _ = sort.Strings

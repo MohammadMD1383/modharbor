@@ -589,8 +589,14 @@ func modrinthLoader(l modmeta.Loader) string {
 // versionPlausible reports whether a project has ever published a version
 // whose number contains the local version, ignoring build metadata.
 //
-// Modrinth version numbers are decorated ("mc26.2-0.9.1-fabric", "0.154.2+26.2",
-// "fabric-26.3-2.3.8"), so containment rather than equality is the right test.
+// Modrinth version numbers are decorated, and the decoration goes on either
+// side of the number itself: "mc26.2-0.9.1-fabric", "fabric-26.3-2.3.8",
+// "0.154.2+26.2". A jar in the wild usually declares the bare number, so
+// equality is not the right test and neither is numericCore: for an mc-first
+// number the leading dotted run is the Minecraft release ("26.2"), not the
+// mod's own version, which silently rejected every such mirror jar. Test
+// containment in both directions and fall back to the numeric core for
+// re-ordered decorations.
 func (r *Resolver) versionPlausible(ctx context.Context, projectID, localVersion string) bool {
 	versions, err := r.versionsCached(ctx, projectID)
 	if err != nil || len(versions) == 0 {
@@ -602,10 +608,12 @@ func (r *Resolver) versionPlausible(ctx context.Context, projectID, localVersion
 	}
 	core := numericCore(localVersion)
 	for _, v := range versions {
-		if normaliseVersion(v.VersionNumber) == want {
+		got := normaliseVersion(v.VersionNumber)
+		if got == want ||
+			strings.Contains(got, want) || strings.Contains(want, got) {
 			return true
 		}
-		if core != "" && numericCore(v.VersionNumber) == core {
+		if core != "" && numericCore(got) == core {
 			return true
 		}
 	}

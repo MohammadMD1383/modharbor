@@ -55,6 +55,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A config file that already existed kept whatever mode it had, so an API key
+  could land in a world-readable file.** `SECURITY.md` promises `config.json` is
+  written `0600` "because the document can hold a CurseForge or Modrinth API
+  key", but `os.WriteFile` applies its perm only when it *creates* the file. A
+  `0644` config — hand-created, restored from a backup, copied off another
+  machine, or written by an older build — stayed `0644`, and the next
+  `modharbor config set curseforge.apiKey …` wrote a credential into it.
+
+  `config.Save` now tightens the mode *before* writing, rather than chmod-ing
+  afterwards, so there is no window in which the key is briefly readable.
+  Pinned by `TestSaveTightensAnExistingWorldReadableConfig`.
+- **`--config` failed anywhere outside the XDG config directory.** `config.Save`
+  created `Paths.ConfigDir`, but `Load` sets `Paths.ConfigFile` to the `--config`
+  argument while leaving `ConfigDir` at its XDG default. So
+  `modharbor --config /somewhere/else/my.json` failed with `no such file or
+  directory` unless that directory already existed. `Save` now creates the
+  parent of the file it actually writes. Pinned by
+  `TestSaveCreatesTheParentOfAnExplicitConfigPath`.
+- **A rollback can no longer leave behind the one thing it cannot undo.** The
+  archive a rollback writes — every jar that was in `mods/`, swept aside before
+  the restore — is what makes the restore undoable, and it is named by
+  `nextStamp`. On a same-second collision `nextStamp` disambiguates with a
+  `-NNN` suffix, but `loadSnapshots` decided what was a restore point with a
+  bare `time.Parse(rollbackLayout, name)`, which rejects any suffix. So in
+  exactly the case `nextStamp`'s own comment describes — a rollback following an
+  update inside the same second — the archive was invisible to `--list` and
+  unreachable by `--to`. The promise printed to the user ("the restore is
+  undoable") was false.
+
+  Snapshot names are now parsed by `isRestorePoint`, which strips an optional
+  numeric suffix before applying the layout. The suffix stays *after* the
+  trailing `Z`, which is what keeps the reverse string compare in
+  `loadSnapshots` chronological: `-001` is a greater name, so the later
+  snapshot still sorts first. Pinned by
+  `internal/cli/rollback_test.go`, which drives the whole
+  write-then-list round trip.
+- **`rollback --list --json` no longer changes the type of `.snapshots`
+  depending on whether anything is in it.** With snapshots present the payload
+  carries an array of objects; with none it fell through to `renderNoSnapshots`,
+  whose `rollbackJSON` reports the same key as a *count*. A consumer doing
+  `.snapshots[]` therefore failed on precisely the instances that had nothing
+  to restore. The list form now keeps its own shape and emits `[]`.
+- **`rollback --list` now prints how many snapshots there are.** The summary
+  line interpolated `plural(...)`, which returns the *word* and not the phrase,
+  so the count was never printed: it read `snapshots, 58 B`. Every other call
+  site pairs it with the number explicitly.
+- **Mods whose Modrinth version number puts the game version first are no
+  longer reported unmatched.** A CurseForge-mirror jar declares the bare mod
+  version (`3.7.1`) where Modrinth publishes the same build decorated
+  (`mc26.2-3.7.1`) — a very common Modrinth convention. Such a name match
+  scores below the slug threshold, so `versionPlausible` was the deciding gate,
+  and it compared against `numericCore`, which returns the *leading* dotted run
+  of a version string. For an mc-first number that is the Minecraft release
+  rather than the mod's own version, so the gate answered "no" every time and
+  the mod fell out of migration entirely — the exact failure the fuzzy chain
+  exists to prevent, since hash lookup cannot reach a mirror.
+
+  `versionPlausible` now tests containment in both directions, keeping the
+  numeric-core fallback for re-ordered decorations. Its doc comment already
+  claimed containment was the right test; the code never did it.
+  `versionCorroborated` and `sizeTolerance` are untouched and
+  `collide_test.go` still passes. Pinned by
+  `internal/resolver/helpers_test.go`, which also covers the resolver's
+  orchestration and helper surface (`ResolveAll`, `ForInstance`, the version
+  cache, `latestFor`, `persist` gating) — `internal/resolver` 58.8% → 85.0%.
+- **Tables and panels no longer draw a box that does not close.** Four layout
+  defects in `internal/ui/table.go`, all of which produced a visibly ragged
+  right edge rather than an error:
+
+  - A table's horizontal rules were one cell wider than the rows under them.
+    `totalWidth` added a two-space gutter for every column, but cells are
+    joined by a gutter *between* each pair, so n columns have n−1 of them.
+  - When a table was wider than the terminal, the rules were drawn at the
+    *unshrunk* width while the rows were correctly squeezed to fit — a
+    189-cell rule over a 60-cell body on a 100-column terminal. One unbroken
+    run of box-drawing characters has no break opportunity in it, so the rule
+    was the part that wrapped.
+  - Every titled panel's top edge was 2–3 cells wider than its body. The rule
+    beside the label was sized from the title rather than from the label it
+    actually draws, and the two disagreed by the label's own padding spaces.
+  - A panel title longer than the terminal was never truncated, so the box was
+    pushed up to 448 cells wide and `strings.Repeat` was asked for a negative
+    count of the rule.
+
+  Also: the header row is now trimmed like a body row, so no line of a table
+  ends in padding, and the dead `shrinkWeights` is gone — unexported,
+  unreferenced, and its comment described behaviour it did not have. All four
+  fixes are pinned by `internal/ui/table_test.go`, which covers `table.go` at
+  100% (`internal/ui` 31.2% → 60.1%).
+- **Status messages with no arguments are no longer run through `Sprintf`.**
+  `ui.Success`/`Failure`/`Warn`/`Info`/`Note` share one formatter that called
+  `fmt.Sprintf(format, a...)` unconditionally, so a message passed as data with
+  a literal percent in it had its tail replaced by a verb error:
+
+  ```
+  ui.Info("shards 95% done")   ->  • shards 95%!d(MISSING)one
+  ```
+
+  With no arguments the message is now returned verbatim; with arguments the
+  behaviour is unchanged, so every existing call site is unaffected. No current
+  message contains a stray `%`, so this changes no released output — it closes
+  a trap for the next one that does. Pinned by
+  `internal/ui/output_test.go`.
+- **An explicit `--color` is no longer silently ignored.** `ui.InitColor`
+  treated `explicit` as "the user wants colour" only when `--quiet` was *also*
+  set; without `--quiet` it resolved to colour off. The two switch arms were
+  swapped, so the one path that was supposed to guarantee colour produced grey
+  text instead. No released behaviour changes — the CLI never passes
+  `explicit`, it calls `ui.SetColorEnabled` for `--color`/`--no-color` directly
+  — but the exported function contradicted its own documentation. Pinned by
+  `internal/ui/color_test.go`, which covers the whole
+  `quiet` × `explicit` × auto-detected matrix.
 - **`release.yml` no longer re-uploads the release assets.** goreleaser already
   creates the GitHub release *and* uploads every one of its artifacts to it —
   the six archives, the four linux packages and `checksums.txt`. The extra

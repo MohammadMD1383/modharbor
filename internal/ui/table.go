@@ -79,6 +79,14 @@ func (t *Table) Render() {
 	total := t.totalWidth(widths)
 	fit := Width()
 	shrink := total > fit
+	if shrink {
+		// The rules have to be drawn from the widths the rows actually get.
+		// Measuring them against the natural width left a rule a hundred
+		// cells wide over a body that had been carefully squeezed to fit, and
+		// the rule was the part that wrapped.
+		widths = shrinkColumns(widths, fit-2)
+		total = t.totalWidth(widths)
+	}
 
 	rule := paint(Palette.Rule, strings.Repeat(boxH, total))
 
@@ -93,7 +101,7 @@ func (t *Table) Render() {
 
 	// Footers
 	for _, f := range t.footers {
-		Line("  " + paint(Palette.Rule, strings.Repeat(boxH, total)))
+		Line("  " + rule)
 		Line("  " + Bold(t.rowCells(f, widths, shrink, fit)))
 	}
 	Blank()
@@ -121,27 +129,19 @@ func (t *Table) measure() []int {
 	return w
 }
 
+// totalWidth is the visible width of one rendered row: every cell plus one
+// two-space gutter *between* each pair of cells. The rules are drawn to this
+// width, so it has to be the same sum the rows use — one cell wide and the
+// table reads as a line of dashes hanging over the right edge.
 func (t *Table) totalWidth(w []int) int {
-	total := 0
+	total := 2 * (len(w) - 1)
 	for _, x := range w {
-		total += x + 2
-	}
-	if total > 0 {
-		total-- // trailing gap
+		total += x
 	}
 	if total < 12 {
 		total = 12
 	}
 	return total
-}
-
-// shrinkWeights picks the widest columns to sacrifice when space is tight.
-func (t *Table) shrinkWeights(w []int, budget int) []int {
-	weights := make([]int, len(w))
-	for i := range w {
-		weights[i] = 1000 / (w[i] + 1)
-	}
-	return weights
 }
 
 func (t *Table) headerRow(w []int, shrink bool, fit int) string {
@@ -158,7 +158,10 @@ func (t *Table) headerRow(w []int, shrink bool, fit int) string {
 			cells[i] = Bold(paint(Palette.Brand, Pad(h, widths[i])))
 		}
 	}
-	return strings.Join(cells, "  ")
+	// Trimmed like a body row, so no line of a table ends in padding. The rule
+	// below it is the frame and stays full width; nothing here needs the header
+	// to reserve the last column's padding to get that.
+	return strings.TrimRight(strings.Join(cells, "  "), " ")
 }
 
 func (t *Table) rowCells(row []string, w []int, shrink bool, fit int) string {
@@ -218,10 +221,8 @@ func shrinkColumns(w []int, budget int) []int {
 		if wi < 0 {
 			break
 		}
+		// Only columns wider than six are cut, so widest/2 is at least three.
 		cut := widest / 2
-		if cut < 1 {
-			cut = 1
-		}
 		out[wi] -= cut
 		excess -= cut
 	}
@@ -294,9 +295,9 @@ func (p *Panel) Render() {
 		}
 	}
 	if p.title != "" {
-		t := p.icon + " " + p.title
-		if VisibleWidth(t)+4 > inner {
-			inner = VisibleWidth(t) + 4
+		// inner+4 is the width of the frame: two borders, one space each side.
+		if VisibleWidth(p.labelText())+4 > inner {
+			inner = VisibleWidth(p.labelText()) + 4
 		}
 	}
 	if inner+4 > Width()-2 {
@@ -305,11 +306,16 @@ func (p *Panel) Render() {
 
 	top := paint(Palette.Brand, boxTL)
 	if p.title != "" {
-		label := Bold(paint(Palette.Brand, " "+p.icon+" "+p.title+" "))
-		rest := inner + 2 - VisibleWidth(p.labelText())
-		if rest < 0 {
-			rest = 0
-		}
+		// The label has to fit the frame, which the width clamp above may have
+		// narrowed under it. A title longer than the terminal would otherwise
+		// push the top edge past the right of the body and wrap it.
+		//
+		// The label's own width is what the rule is measured from, not the
+		// title's: the two used to disagree by the label's padding spaces,
+		// which left the top border two cells wider than the body under it.
+		label := Bold(paint(Palette.Brand, Truncate(" "+p.labelText()+" ", inner+2)))
+		// The remainder is never negative: the label was truncated to fit above.
+		rest := inner + 2 - VisibleWidth(label)
 		top += label + paint(Palette.Rule, strings.Repeat(boxH, rest)) + paint(Palette.Brand, boxTR)
 	} else {
 		top += paint(Palette.Rule, strings.Repeat(boxH, inner+2)) + paint(Palette.Brand, boxTR)

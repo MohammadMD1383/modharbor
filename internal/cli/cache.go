@@ -366,9 +366,8 @@ func configSet(a *app.App, key, value string) error {
 
 // configSave writes the config file back to disk.
 func configSave(a *app.App) error {
-	if err := os.MkdirAll(a.Paths.ConfigDir, 0o755); err != nil {
-		return err
-	}
+	// config.Save creates the parent of the file it writes, which is not
+	// Paths.ConfigDir when --config points elsewhere.
 	return config.Save(a.Paths, a.Config)
 }
 

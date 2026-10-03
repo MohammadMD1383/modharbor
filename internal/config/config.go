@@ -187,9 +187,24 @@ func Load(path string) (*Config, Paths, error) {
 
 // Save writes the config file with 0600 permissions (it may hold API keys).
 func Save(paths Paths, cfg *Config) error {
-	if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
+	// The directory to create is the parent of the file, which is not ConfigDir
+	// when --config points elsewhere.
+	if err := os.MkdirAll(filepath.Dir(paths.ConfigFile), 0o755); err != nil {
 		return err
 	}
+	// os.WriteFile applies its perm only when it creates the file, so a config
+	// that already exists keeps whatever mode it had — 0644 for one restored
+	// from a backup, or written by an older build — and the API key would then
+	// be world-readable. Tighten first, so the file is never briefly readable
+	// while the key is being written into it.
+	if _, err := os.Stat(paths.ConfigFile); err == nil {
+		if err := os.Chmod(paths.ConfigFile, 0o600); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err

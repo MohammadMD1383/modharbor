@@ -203,8 +203,8 @@ mods and nothing else.
 				}
 			}
 
-			installed, skipped, err := mrpack.Install(cmd.Context(), a.MR(), pack,
-				inst.ModsDirOrDefault(), inst.Path, withOverrides)
+			installed, skipped, err := mrpack.InstallWithProgress(cmd.Context(), a.MR(), pack,
+				inst.ModsDirOrDefault(), inst.Path, withOverrides, importProgress())
 			if err != nil {
 				return fail("%v", err)
 			}
@@ -280,6 +280,31 @@ func stageInstanceOverrides(inst *instance.Info) (string, error) {
 func packMCVersion(pack *mrpack.Modpack) string {
 	return pack.Dependencies["minecraft"].VersionID
 }
+
+// importProgress tracks each jar an import downloads. It returns nil under
+// --json and --quiet, where decorative output is suppressed; ui.Progress
+// additionally disables itself when stderr is not a terminal, so a redirect
+// yields neither the bar nor any escape sequences.
+func importProgress() mrpack.ProgressFunc {
+	if !progressEnabled() {
+		return nil
+	}
+	return func(name string, total int64) mrpack.Progress {
+		bar := ui.NewProgress(name, total)
+		return progressAdapter{bar: bar}
+	}
+}
+
+// progressAdapter lets a ui.Progress bar observe an mrpack download without
+// the mrpack package importing the ui package.
+type progressAdapter struct {
+	bar *ui.Progress
+}
+
+func (a progressAdapter) Add(n int64) { a.bar.Add(n) }
+
+// Done clears the bar line and prints nothing, on success and on failure alike.
+func (a progressAdapter) Done() { a.bar.Done("") }
 
 // presentDigests reports which of a pack's files are already in modsDir, so a
 // plan can tell a download apart from a no-op without touching the network.

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`import` now reports download progress.** Each jar pulled from a `.mrpack`
+  drives the same stderr progress bar other downloads use, labelled by file
+  name. Silent under `--json`/`--quiet`, and skipped files open no bar.
+  Pinned by `internal/mrpack/progress_test.go` (per-file tracking, byte
+  counts, `Done` on checksum mismatch, silence for skips and nil hooks).
 - **`--loader` is now a global flag.** `modharbor outdated --loader forge`
   (and every other instance-taking command, plus `migrate` for its target)
   assumes that loader when the instance declares none, instead of silently

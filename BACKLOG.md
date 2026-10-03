@@ -130,9 +130,12 @@ created, so every return path — including a checksum mismatch — clears the
 line instead of leaving a stuck bar. Progress goes to stderr and is suppressed
 under `--json`/`--quiet` (T4, `993eb1d`).
 
-`import` still downloads silently: its transfer would have to live in
-`internal/mrpack`, out of scope for T4. The plumbing is shaped to thread
-through when that package is next touched.
+`import` downloads now report progress too: `InstallWithProgress` threads a
+`ProgressFunc` hook through `downloadInto`, and the `import` command wires it
+to the same `ui.Progress` bar other downloads use. The hook starts only after
+the request succeeds, prefers Content-Length over the manifest size, and is
+released on every return path including checksum mismatch. Silent under
+`--json`/`--quiet` (T4, `993eb1d`).
 
 ---
 

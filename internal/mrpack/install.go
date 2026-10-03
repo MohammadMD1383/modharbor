@@ -42,6 +42,13 @@ var downloadClient = &http.Client{
 // checks out, so an interrupted import never leaves a half-written jar for
 // Minecraft to choke on.
 func Install(ctx context.Context, mr *modrinth.Client, pack *Modpack, modsDir string, overridesDir string, includeOverrides bool) (installed, skipped int, err error) {
+	return InstallWithProgress(ctx, mr, pack, modsDir, overridesDir, includeOverrides, nil)
+}
+
+// InstallWithProgress materialises a pack the way Install does, tracking each
+// download through onProgress. A nil hook — or a hook returning nil — means a
+// silent transfer; files skipped by digest never start a tracker at all.
+func InstallWithProgress(ctx context.Context, mr *modrinth.Client, pack *Modpack, modsDir string, overridesDir string, includeOverrides bool, onProgress ProgressFunc) (installed, skipped int, err error) {
 	if pack == nil {
 		return 0, 0, fmt.Errorf("no modpack to install")
 	}
@@ -69,7 +76,7 @@ func Install(ctx context.Context, mr *modrinth.Client, pack *Modpack, modsDir st
 			return installed, skipped, fmt.Errorf("%s: %w", f.Name(), err)
 		}
 		dest := filepath.Join(modsDir, f.Name())
-		if err := downloadInto(ctx, url, dest, want); err != nil {
+		if err := downloadInto(ctx, url, dest, want, int64(f.FileSize), f.Name(), onProgress); err != nil {
 			return installed, skipped, fmt.Errorf("%s: %w", f.Name(), err)
 		}
 		if want != "" {
@@ -148,8 +155,9 @@ func installedDigests(modsDir string) (map[string]string, error) {
 }
 
 // downloadInto fetches url into dest and verifies wantSHA1 before the file
-// becomes visible to the loader.
-func downloadInto(ctx context.Context, url, dest, wantSHA1 string) error {
+// becomes visible to the loader. sizeHint is the manifest's advertised byte
+// count; the server's Content-Length wins for the tracker when present.
+func downloadInto(ctx context.Context, url, dest, wantSHA1 string, sizeHint int64, name string, onProgress ProgressFunc) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -175,8 +183,24 @@ func downloadInto(ctx context.Context, url, dest, wantSHA1 string) error {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
+	// The tracker starts only once the request has succeeded, so a connection
+	// failure never opens a bar it cannot finish. It is released on every
+	// return path after that — including a checksum mismatch — so a failed
+	// download cannot leave progress on screen.
+	var p Progress
+	if onProgress != nil {
+		p = onProgress(name, progressTotal(resp.ContentLength, sizeHint))
+	}
+	if p != nil {
+		defer p.Done()
+	}
+	var body io.Reader = resp.Body
+	if p != nil {
+		body = progressReader{src: resp.Body, p: p}
+	}
+
 	h := sha1.New()
-	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
+	if _, err := io.Copy(io.MultiWriter(tmp, h), body); err != nil {
 		tmp.Close()
 		return err
 	}

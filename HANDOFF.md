@@ -76,6 +76,14 @@ Migrating on that match would have installed a stranger's mod.
 `internal/resolver/collide_test.go` passing.** Those four tests encode the
 incident; treat them as the specification.
 
+Note the asymmetry, because B31/B32 turn on it. A weak name match must clear
+*two* gates: `versionPlausible` (has this project ever published the local
+version?) and then `versionCorroborated` (do the sizes agree?). B31 fixed the
+first, which had been rejecting every mc-first decoration. The second still has
+the mirror-image hole — it selects the versions to size-check with
+`numericCore`, so it skips the check for exactly those decorations. That is
+B32, open, and deliberately not bundled into a fix that loosened something else.
+
 ### Nested jars matter for dependencies
 
 `internal/modmeta/nested.go` resolves libraries bundled inside other mods'
@@ -215,6 +223,10 @@ left work that built and passed tests while being wrong.
 | Package | Coverage |
 |---|---|
 | `internal/provider/curseforge` | 98.4% |
+| `internal/hashutil` | 96.6% |
+| `internal/version` | 100.0% |
+| `internal/config` | 91.6% |
+| `internal/resolver` | 85.0% |
 | `internal/store` | 82.6% |
 | `internal/mrpack` | 76.9% |
 | `internal/migrate` | 74.8% |
@@ -222,23 +234,24 @@ left work that built and passed tests while being wrong.
 | `internal/modmeta` | 63.1% |
 | `internal/instance` | 60.3% |
 | `internal/ui` | 60.1% |
-| `internal/resolver` | 58.8% |
 | `internal/cli` | 46.0% |
 
 ---
 
-## Backlog: 28 of 30 closed
+## Backlog: 29 of 32 closed
 
 Remaining, in rough priority order:
 
 | Item | What |
 |---|---|
+| **B32** | `versionCorroborated` skips the size check for mc-first version decorations. Tightens the incident's own safety net, so it needs measuring against the real instance first — see the corroboration note above. |
 | **B9** | Content-addressed jar cache keyed by SHA-512, hard-linked into `mods/`. Makes repeated migrations near-instant. |
 | **B10** | `sync` a saved profile — `.modharbor/profile.toml` pinning exact versions, so an install is reproducible. |
 
 Since this was last written, B11 (duplicate warning on `scan`), B12
 (global `--loader`), B27 (fsync durability), B28 (unreachable
-`overrideHint`), B29 (`resolveURL` file name), and the `add --json`
+`overrideHint`), B29 (`resolveURL` file name), B31 (`versionPlausible`
+rejecting mc-first version decorations), and the `add --json`
 `installed: [{}]` schema have all been fixed and recorded in
 `BACKLOG.md` / `CHANGELOG.md`.
 

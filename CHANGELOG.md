@@ -55,6 +55,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mods whose Modrinth version number puts the game version first are no
+  longer reported unmatched.** A CurseForge-mirror jar declares the bare mod
+  version (`3.7.1`) where Modrinth publishes the same build decorated
+  (`mc26.2-3.7.1`) — a very common Modrinth convention. Such a name match
+  scores below the slug threshold, so `versionPlausible` was the deciding gate,
+  and it compared against `numericCore`, which returns the *leading* dotted run
+  of a version string. For an mc-first number that is the Minecraft release
+  rather than the mod's own version, so the gate answered "no" every time and
+  the mod fell out of migration entirely — the exact failure the fuzzy chain
+  exists to prevent, since hash lookup cannot reach a mirror.
+
+  `versionPlausible` now tests containment in both directions, keeping the
+  numeric-core fallback for re-ordered decorations. Its doc comment already
+  claimed containment was the right test; the code never did it.
+  `versionCorroborated` and `sizeTolerance` are untouched and
+  `collide_test.go` still passes. Pinned by
+  `internal/resolver/helpers_test.go`, which also covers the resolver's
+  orchestration and helper surface (`ResolveAll`, `ForInstance`, the version
+  cache, `latestFor`, `persist` gating) — `internal/resolver` 58.8% → 85.0%.
 - **Tables and panels no longer draw a box that does not close.** Four layout
   defects in `internal/ui/table.go`, all of which produced a visibly ragged
   right edge rather than an error:

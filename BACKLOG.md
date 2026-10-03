@@ -279,6 +279,39 @@ available`. Pinned by an assertion in
 Was `curseforge: 503 ` for a 5xx with an empty body. Done in T9: the message
 names the URL it failed against.
 
+### [x] B31. `versionPlausible` rejects every mc-first version decoration
+Was: a CurseForge-mirror jar declares the bare mod version (`3.7.1`) while
+Modrinth publishes the same build with the game version in front
+(`mc26.2-3.7.1`) — a very common Modrinth convention. The containment name match
+scores below `confSlug`, so `versionPlausible` was the gate, and it compared
+against `numericCore`, which returns the *leading* dotted run. For an mc-first
+number that is the Minecraft release, not the mod's version, so the gate always
+said no and the mod was reported unmatched. Its own doc comment said
+"containment rather than equality is the right test"; the code never did that.
+
+Fixed: `versionPlausible` now tests containment in both directions and keeps
+the numeric-core fallback. `versionCorroborated` and `sizeTolerance` are
+untouched and `collide_test.go` still passes. Pinned by
+`TestNameMatchSurvivesAnMCFirstVersionNumber` and the `TestVersionPlausible`
+table — reverting the fix fails three tests.
+
+### [ ] B32. `versionCorroborated` skips the size check for mc-first decorations
+The other half of B31, deliberately left alone. `versionCorroborated` selects
+the versions it size-checks with the same `numericCore`, so for an
+mc-first-decorated project it finds no matching version, `sameCore` comes back
+empty and the function allows the match through unchecked. In other words the
+corroboration that B31 strengthened is skipped precisely for the decoration B31
+was about: a private `More Tools 1.0.0` would sail past the published
+`mc1.20.1-1.0.0` of a stranger's 8.9 MB project.
+
+Why it was not changed in the same commit: this one *tightens* the safety net
+rather than loosening it, and `collide_test.go` encodes the incident as the
+specification. Widening `sameCore` to containment means every legitimate mirror
+jar whose repackaged size differs by more than 2× starts being rejected — a
+different trade against a different failure mode, and one that needs measuring
+against the author's real 33-mod instance rather than a fixture. The loader veto
+and the exact-hash path are unaffected either way.
+
 ---
 
 ## Known limitation, now fixed

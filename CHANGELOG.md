@@ -55,6 +55,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A config file that already existed kept whatever mode it had, so an API key
+  could land in a world-readable file.** `SECURITY.md` promises `config.json` is
+  written `0600` "because the document can hold a CurseForge or Modrinth API
+  key", but `os.WriteFile` applies its perm only when it *creates* the file. A
+  `0644` config — hand-created, restored from a backup, copied off another
+  machine, or written by an older build — stayed `0644`, and the next
+  `modharbor config set curseforge.apiKey …` wrote a credential into it.
+
+  `config.Save` now tightens the mode *before* writing, rather than chmod-ing
+  afterwards, so there is no window in which the key is briefly readable.
+  Pinned by `TestSaveTightensAnExistingWorldReadableConfig`.
+- **`--config` failed anywhere outside the XDG config directory.** `config.Save`
+  created `Paths.ConfigDir`, but `Load` sets `Paths.ConfigFile` to the `--config`
+  argument while leaving `ConfigDir` at its XDG default. So
+  `modharbor --config /somewhere/else/my.json` failed with `no such file or
+  directory` unless that directory already existed. `Save` now creates the
+  parent of the file it actually writes. Pinned by
+  `TestSaveCreatesTheParentOfAnExplicitConfigPath`.
 - **A rollback can no longer leave behind the one thing it cannot undo.** The
   archive a rollback writes — every jar that was in `mods/`, swept aside before
   the restore — is what makes the restore undoable, and it is named by

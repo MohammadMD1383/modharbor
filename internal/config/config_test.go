@@ -449,6 +449,68 @@ func TestSaveReportsUnusableConfigDir(t *testing.T) {
 	}
 }
 
+func TestSaveTightensAnExistingWorldReadableConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits; Windows ACLs are out of scope for this check")
+	}
+	isolate(t)
+	dir := filepath.Join(t.TempDir(), "modharbor")
+	paths := Paths{ConfigDir: dir, ConfigFile: filepath.Join(dir, "config.json")}
+
+	// A config that already exists — hand-created, restored from a backup, or
+	// written by an older build — may be group- or world-readable.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.ConfigFile, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Default()
+	cfg.Modrinth.APIKey = "literal-test-key"
+	if err := Save(paths, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// os.WriteFile only applies its perm when it creates the file, so writing
+	// over an existing 0644 config would otherwise leave the API key readable
+	// by every local user. SECURITY.md promises 0600, so Save must enforce it
+	// rather than assume it.
+	fi, err := os.Stat(paths.ConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("Save left a pre-existing config at mode %v, want it tightened to 0600", got)
+	}
+}
+
+func TestSaveCreatesTheParentOfAnExplicitConfigPath(t *testing.T) {
+	isolate(t)
+	// `--config /somewhere/else/my.json` sets ConfigFile but leaves ConfigDir
+	// at its XDG default, so the directory Save must create is the parent of
+	// ConfigFile, not ConfigDir.
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere", "nested")
+	paths, err := DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths.ConfigFile = filepath.Join(elsewhere, "my.json")
+	if paths.ConfigDir == filepath.Dir(paths.ConfigFile) {
+		t.Fatalf("test needs ConfigDir %q to differ from the config file's parent", paths.ConfigDir)
+	}
+	if _, err := os.Stat(elsewhere); !os.IsNotExist(err) {
+		t.Fatalf("test needs %q not to exist yet", elsewhere)
+	}
+
+	if err := Save(paths, Default()); err != nil {
+		t.Fatalf("Save to an explicit path outside the XDG config dir failed: %v", err)
+	}
+	if _, err := os.Stat(paths.ConfigFile); err != nil {
+		t.Errorf("Save did not create %q: %v", paths.ConfigFile, err)
+	}
+}
+
 // ─── minecraft directory ─────────────────────────────────────────────────────
 
 func TestDefaultMinecraftDirPrefersEnvVar(t *testing.T) {

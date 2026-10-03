@@ -60,7 +60,12 @@ cannot be detected.
 
 - **Config file permissions.** `config.Save` writes
   `$XDG_CONFIG_HOME/modharbor/config.json` with mode **`0600`**, because the
-  document can hold a CurseForge or Modrinth API key. Do not relax this, and
+  document can hold a CurseForge or Modrinth API key. It *enforces* that rather
+  than merely requesting it: `os.WriteFile` applies its perm only when it
+  creates the file, so `Save` tightens an existing config's mode before writing
+  into it. A `0644` config — restored from a backup, copied from another
+  machine, or written by an older build — is brought back to `0600` on the next
+  save, instead of silently absorbing a credential. Do not relax this, and
   please report it if the file is ever created world-readable.
 - **What modharbor stores.** Only what you put there via
   `modharbor config set`. The state document at
